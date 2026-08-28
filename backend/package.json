@@ -9,7 +9,8 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:seed": "ts-node prisma/seed.ts",
-    "set-password": "ts-node scripts/set-password.ts"
+    "set-password": "ts-node scripts/set-password.ts",
+    "remove-seed-demo-data": "ts-node scripts/remove-seed-demo-data.ts"
   },
   "prisma": {
     "seed": "ts-node prisma/seed.ts"
