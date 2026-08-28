@@ -10,6 +10,7 @@ import { DepartmentsModule } from './modules/departments/departments.module';
 import { ClientsModule } from './modules/clients/clients.module';
 import { LeaseImportModule } from './modules/lease-import/lease-import.module';
 import { EquipmentPricingModule } from './modules/equipment-pricing/equipment-pricing.module';
+import { DashboardModule } from './modules/dashboard/dashboard.module';
 // Próximo módulo de domínio a implementar: UsersModule (CRUD de usuários/RBAC).
 
 @Module({
@@ -25,6 +26,7 @@ import { EquipmentPricingModule } from './modules/equipment-pricing/equipment-pr
     FinanceModule,
     ReconciliationModule,
     LeaseImportModule,
+    DashboardModule,
   ],
 })
 export class AppModule {}
