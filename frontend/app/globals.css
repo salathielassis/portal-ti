@@ -1,0 +1,112 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ============================================================================
+   Portal TI - Controle de Ativos — Design Tokens
+   Paleta de marca:
+     Azul   (Pantone 7687 C) #2D4F9E -> HSL 222 56% 40%
+     Laranja(Pantone 716 C)  #DB812E -> HSL  29 71% 52%
+     Preto  (Process Black)  #000000 -> HSL   0  0%  0%
+   Todas as cores abaixo são declaradas como tripla HSL (sem "hsl()") para
+   uso direto em `hsl(var(--token))`, seguindo a convenção shadcn/ui.
+   Trocar o tema (claro/escuro) apenas alterna o atributo `.dark` na <html>;
+   todos os componentes consomem os tokens, nunca cores fixas.
+============================================================================ */
+
+@layer base {
+  :root {
+    /* Base neutra clara: fundo cinza muito claro + cards brancos */
+    --background: 210 20% 98%;      /* #F9FAFB */
+    --foreground: 222 20% 9%;       /* quase preto, aproxima Process Black com conforto de leitura */
+
+    --card: 0 0% 100%;              /* #FFFFFF */
+    --card-foreground: 222 20% 9%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 20% 9%;
+
+    /* Marca — Azul Metálico como cor primária de ação */
+    --primary: 222 56% 40%;         /* #2D4F9E */
+    --primary-foreground: 0 0% 100%;
+
+    /* Marca — Laranja como cor secundária / destaque */
+    --secondary: 29 71% 52%;        /* #DB812E */
+    --secondary-foreground: 0 0% 100%;
+
+    --muted: 210 20% 95%;
+    --muted-foreground: 220 9% 40%;
+
+    --accent: 222 56% 96%;          /* tint suave do azul, usado em hover/seleção */
+    --accent-foreground: 222 56% 34%;
+
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+
+    --success: 142 71% 34%;
+    --warning: 29 71% 52%;          /* reaproveita o laranja da marca para alertas */
+
+    --border: 220 13% 90%;
+    --input: 220 13% 90%;
+    --ring: 222 56% 40%;
+
+    --radius: 0.75rem;
+
+    /* Cores fixas de gráfico (Recharts) — mantêm-se legíveis em ambos os temas */
+    --chart-1: 222 56% 40%;   /* azul marca */
+    --chart-2: 29 71% 52%;    /* laranja marca */
+    --chart-3: 199 70% 45%;   /* azul claro de apoio */
+    --chart-4: 142 55% 40%;   /* verde (ativos próprios / ok) */
+    --chart-5: 220 9% 55%;    /* cinza neutro */
+  }
+
+  .dark {
+    --background: 222 45% 7%;       /* quase preto com leve matiz azulado */
+    --foreground: 210 20% 96%;
+
+    --card: 222 38% 10%;
+    --card-foreground: 210 20% 96%;
+
+    --popover: 222 38% 10%;
+    --popover-foreground: 210 20% 96%;
+
+    /* Azul mais claro no escuro para manter contraste AA sobre fundo escuro */
+    --primary: 222 72% 64%;
+    --primary-foreground: 222 47% 8%;
+
+    --secondary: 29 80% 58%;
+    --secondary-foreground: 222 47% 8%;
+
+    --muted: 222 22% 15%;
+    --muted-foreground: 217 12% 65%;
+
+    --accent: 222 30% 17%;
+    --accent-foreground: 210 20% 96%;
+
+    --destructive: 0 63% 48%;
+    --destructive-foreground: 0 0% 100%;
+
+    --success: 142 60% 45%;
+    --warning: 29 80% 58%;
+
+    --border: 222 22% 18%;
+    --input: 222 22% 18%;
+    --ring: 222 72% 64%;
+
+    --chart-1: 222 72% 64%;
+    --chart-2: 29 80% 58%;
+    --chart-3: 199 75% 60%;
+    --chart-4: 142 55% 50%;
+    --chart-5: 220 10% 65%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+  }
+}

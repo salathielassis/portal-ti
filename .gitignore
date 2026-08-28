@@ -1,0 +1,18 @@
+# dependencies
+node_modules/
+**/node_modules/
+
+# build outputs
+backend/dist/
+frontend/.next/
+frontend/out/
+
+# env files (nunca versionar segredos)
+.env
+**/.env
+**/.env.local
+
+# logs / OS
+*.log
+.DS_Store
+Thumbs.db
