@@ -8,6 +8,7 @@ import {
   AllocateAssetDto,
   ReturnAssetDto,
   TransferAssetDto,
+  UpdateAssignedToDto,
   SendToMaintenanceDto,
   ReturnFromMaintenanceDto,
 } from './dto/allocate-asset.dto';
@@ -137,6 +138,30 @@ export class AssetsService {
       await trx.asset.update({ where: { id: assetId }, data: { status: AssetStatus.EM_USO } });
 
       return allocation;
+    });
+  }
+
+  /**
+   * Corrige/preenche só o nome do responsável na alocação ATIVA atual — sem
+   * fechar/reabrir alocação, sem mudar site/departamento e sem gerar
+   * movimentação nova, porque fisicamente nada mudou de lugar. Pensado para
+   * o caso comum de uma importação de extrato de locação ter deixado o ativo
+   * com "Não informado" (o PDF da locadora normalmente não traz o nome do
+   * colaborador, só a obra/local) e o usuário precisar corrigir depois.
+   */
+  async updateAssignedTo(assetId: string, dto: UpdateAssignedToDto) {
+    await this.findOne(assetId);
+    const activeAllocation = await this.prisma.assetAllocation.findFirst({
+      where: { assetId, isActive: true },
+    });
+    if (!activeAllocation) {
+      throw new BadRequestException(
+        'Este ativo não possui uma alocação ativa — use "Alocar" para atribuir um responsável.',
+      );
+    }
+    return this.prisma.assetAllocation.update({
+      where: { id: activeAllocation.id },
+      data: { assignedToName: dto.assignedToName },
     });
   }
 

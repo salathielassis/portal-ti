@@ -8,6 +8,7 @@ import {
   AllocateAssetDto,
   ReturnAssetDto,
   TransferAssetDto,
+  UpdateAssignedToDto,
   SendToMaintenanceDto,
   ReturnFromMaintenanceDto,
 } from './dto/allocate-asset.dto';
@@ -67,6 +68,16 @@ export class AssetsController {
   @ApiOperation({ summary: 'Entrega o ativo a um colaborador, departamento, obra/site ou cliente' })
   allocate(@Param('id') id: string, @Body() dto: AllocateAssetDto, @CurrentUser() user: { id: string }) {
     return this.assetsService.allocate(id, dto, user.id);
+  }
+
+  @Patch(':id/assigned-to')
+  @Roles(UserRole.ADMIN, UserRole.SUPORTE)
+  @ApiOperation({
+    summary:
+      'Corrige/preenche só o nome do responsável na alocação ativa atual (ex.: ativo importado do extrato de locação sem colaborador informado)',
+  })
+  updateAssignedTo(@Param('id') id: string, @Body() dto: UpdateAssignedToDto) {
+    return this.assetsService.updateAssignedTo(id, dto);
   }
 
   @Post(':id/return')

@@ -78,6 +78,21 @@ export class TransferAssetDto {
   notes?: string;
 }
 
+/**
+ * Corrige/preenche apenas o nome do responsável pela alocação ATIVA atual,
+ * sem mexer em site/departamento nem fechar/abrir uma nova alocação — usado
+ * principalmente depois de uma importação de extrato de locação, onde o PDF
+ * normalmente não traz o nome do colaborador (só a obra/local), então o
+ * ativo chega com "Não informado" e precisa ser corrigido manualmente.
+ * Diferente de "Transferir": não gera um novo registro de movimentação nem
+ * fecha/reabre a alocação, porque fisicamente nada mudou de lugar.
+ */
+export class UpdateAssignedToDto {
+  @ApiProperty({ description: 'Nome do colaborador responsável pelo ativo' })
+  @IsString()
+  assignedToName: string;
+}
+
 export class SendToMaintenanceDto {
   @ApiProperty({ example: '2026-08-21' })
   @IsDateString()

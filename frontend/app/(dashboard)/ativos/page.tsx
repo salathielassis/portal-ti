@@ -11,6 +11,7 @@ import {
   ArrowRightLeft,
   Wrench,
   Undo2,
+  UserCog,
 } from 'lucide-react';
 import { Header } from '@/components/layout/header';
 import { Button } from '@/components/ui/button';
@@ -177,6 +178,10 @@ export default function AtivosPage() {
   const [transferForm, setTransferForm] = React.useState(emptyTransferForm);
   const [transferError, setTransferError] = React.useState<string | null>(null);
 
+  const [editingAssignee, setEditingAssignee] = React.useState<Asset | null>(null);
+  const [assignedToValue, setAssignedToValue] = React.useState('');
+  const [assignedToError, setAssignedToError] = React.useState<string | null>(null);
+
   const [maintenanceAsset, setMaintenanceAsset] = React.useState<{ asset: Asset; mode: 'start' | 'end' } | null>(null);
   const [maintenanceForm, setMaintenanceForm] = React.useState(emptyMaintenanceForm);
   const [maintenanceError, setMaintenanceError] = React.useState<string | null>(null);
@@ -296,6 +301,22 @@ export default function AtivosPage() {
       await loadData();
     } catch (err) {
       setTransferError(err instanceof ApiError ? err.message : 'Não foi possível transferir o ativo.');
+    }
+  }
+
+  async function handleUpdateAssignedTo(e: React.FormEvent) {
+    e.preventDefault();
+    if (!editingAssignee) return;
+    setAssignedToError(null);
+    try {
+      await apiFetch(`/assets/${editingAssignee.id}/assigned-to`, {
+        method: 'PATCH',
+        body: JSON.stringify({ assignedToName: assignedToValue }),
+      });
+      setEditingAssignee(null);
+      await loadData();
+    } catch (err) {
+      setAssignedToError(err instanceof ApiError ? err.message : 'Não foi possível salvar o responsável.');
     }
   }
 
@@ -553,6 +574,15 @@ export default function AtivosPage() {
                                 <>
                                   <DropdownMenuItem
                                     onClick={() => {
+                                      setEditingAssignee(asset);
+                                      setAssignedToValue(asset.allocations[0]?.assignedToName ?? '');
+                                      setAssignedToError(null);
+                                    }}
+                                  >
+                                    <UserCog className="mr-2 h-3.5 w-3.5" /> Editar responsável
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem
+                                    onClick={() => {
                                       setTransferringAsset(asset);
                                       setTransferForm(emptyTransferForm);
                                       setTransferError(null);
@@ -647,6 +677,36 @@ export default function AtivosPage() {
             </div>
             <DialogFooter>
               <Button type="submit">Confirmar entrega</Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Editar responsável */}
+      <Dialog open={!!editingAssignee} onOpenChange={(v) => !v && setEditingAssignee(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Editar responsável — {editingAssignee?.assetTag}</DialogTitle>
+          </DialogHeader>
+          <form onSubmit={handleUpdateAssignedTo} className="space-y-4">
+            {assignedToError && <Alert variant="destructive">{assignedToError}</Alert>}
+            <p className="text-sm text-muted-foreground">
+              Corrige só o nome do colaborador responsável, sem mexer na obra/filial nem gerar uma movimentação —
+              útil para preencher o responsável de ativos importados do extrato de locação (que normalmente vêm
+              com "Não informado", já que o PDF da locadora não traz esse dado).
+            </p>
+            <div className="space-y-1.5">
+              <Label htmlFor="assignedToValue">Colaborador responsável</Label>
+              <Input
+                id="assignedToValue"
+                required
+                placeholder="Nome do colaborador"
+                value={assignedToValue}
+                onChange={(e) => setAssignedToValue(e.target.value)}
+              />
+            </div>
+            <DialogFooter>
+              <Button type="submit">Salvar</Button>
             </DialogFooter>
           </form>
         </DialogContent>

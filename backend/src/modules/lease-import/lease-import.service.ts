@@ -43,12 +43,14 @@ function addYears(date: Date, years: number): Date {
 /**
  * Serviço de importação em cascata do "Extrato de Locação": a partir de um
  * PDF, resolve/cria Cliente → Site (obra/filial) → Fornecedor → Contrato →
- * Fatura → Ativos → Alocações, tudo em uma única transação.
+ * Fatura → Ativos → Alocações.
  *
  * Todas as chaves de upsert são pensadas para tornar a reimportação do MESMO
  * extrato (ex.: o financeiro reenviando por engano) idempotente: nada é
  * duplicado, os registros existentes são atualizados com os dados mais
- * recentes do PDF.
+ * recentes do PDF. Essa idempotência é o que permite rodar a cascata como uma
+ * sequência de upserts simples em vez de uma `$transaction` interativa (ver
+ * comentário no início de `execute()`).
  */
 @Injectable()
 export class LeaseImportService {
@@ -249,231 +251,249 @@ export class LeaseImportService {
     // importação de um extrato com vários equipamentos.
     const activeTiers = await this.prisma.equipmentPriceTier.findMany({ where: { active: true } });
 
-    const result = await this.prisma.$transaction(
-      async (tx) => {
-      // 1. Cliente (grupo empresarial, pela raiz do CNPJ)
-      let client = await tx.client.findUnique({ where: { cnpjRoot: clientCnpjRoot } });
-      let clientCreated = false;
-      if (!client) {
-        client = await tx.client.create({
-          data: { cnpjRoot: clientCnpjRoot, name: header.clientName || clientCnpjRoot },
-        });
-        clientCreated = true;
-      }
+    // IMPORTANTE: esta cascata NÃO roda dentro de uma `$transaction`
+    // interativa do Prisma. Já rodou assim antes, mas contra um banco
+    // serverless com pooler (Neon, atrás de um PgBouncer em modo
+    // "transaction") isso causava o erro "Transaction API error: Transaction
+    // not found" — o Prisma precisa manter UMA conexão dedicada aberta do
+    // início ao fim da transação, e esse tipo de pooler pode devolver/trocar
+    // a conexão no meio do caminho, principalmente com extratos de muitos
+    // equipamentos (mais round-trips = mais tempo com a conexão presa).
+    //
+    // A cascata continua segura sem transação porque cada etapa já é um
+    // upsert por chave natural (CNPJ, nº de série, [contrato, competência])
+    // — reimportar o mesmo extrato depois de uma falha no meio do caminho não
+    // duplica nada, só completa o que faltou. A única perda é a atomicidade
+    // "tudo ou nada" entre Cliente/Site/Fornecedor/Contrato/Fatura/Ativos, que
+    // não é necessária aqui dado esse desenho idempotente.
+    const client = await this.upsertClient(clientCnpjRoot, header.clientName);
+    const site = await this.upsertSite(header, client.id);
+    const supplier = await this.upsertSupplier(header);
+    const contract = await this.upsertContract(header, supplier.id, site.id, items.length);
+    const invoice = await this.upsertInvoice(contract.id, referenceMonth, header, dedupedItems);
 
-      // 2. Site (obra/filial — onde os ativos são fisicamente alocados)
-      let site = await tx.site.findUnique({ where: { cnpj: header.clientCnpj } });
-      let siteCreated = false;
-      if (!site) {
-        site = await tx.site.create({
-          data: {
-            clientId: client.id,
-            cnpj: header.clientCnpj,
-            name: header.classification || header.clientName,
-            costCenterLabel: header.classification || null,
-            isHeadquarters: false,
-            addressStreet: header.address.street,
-            addressNumber: header.address.number,
-            addressComplement: header.address.complement,
-            addressDistrict: header.address.district,
-            addressCity: header.address.city,
-            addressState: header.address.state,
-            addressZip: header.address.zip,
-            contactName: header.contact.name,
-            contactPhone: header.contact.phone,
-            contactEmail: header.contact.email,
-          },
-        });
-        siteCreated = true;
-      }
+    // 6. Ativos + alocações
+    let assetsCreated = 0;
+    let assetsUpdated = 0;
+    let allocationsCreated = 0;
+    let allocationsUpdated = 0;
+    let allocationsClosed = 0;
 
-      // 3. Fornecedor (locadora)
-      let supplier = await tx.supplier.findUnique({ where: { cnpj: header.supplierCnpj } });
-      let supplierCreated = false;
-      if (!supplier) {
-        supplier = await tx.supplier.create({
-          data: { cnpj: header.supplierCnpj, name: header.supplierName || header.supplierCnpj },
-        });
-        supplierCreated = true;
-      }
-
-      // 4. Contrato
-      let contract = await tx.contract.findUnique({ where: { contractNumber: header.contractNumber } });
-      let contractCreated = false;
-      if (!contract) {
-        const referenceMonthlyValue =
-          header.totalValue !== null && items.length > 0 ? header.totalValue / items.length : 0;
-        contract = await tx.contract.create({
-          data: {
-            contractNumber: header.contractNumber,
-            supplierId: supplier.id,
-            siteId: site.id,
-            status: ContractStatus.ATIVO,
-            // O extrato não informa a vigência real do contrato — usamos o
-            // período de apuração como início e +1 ano como referência,
-            // ajustável manualmente na tela de Contratos depois.
-            startDate: header.periodStart,
-            endDate: addYears(header.periodStart, 1),
-            monthlyValuePerAsset: referenceMonthlyValue,
-          },
-        });
-        contractCreated = true;
-      } else if (!contract.siteId) {
-        contract = await tx.contract.update({ where: { id: contract.id }, data: { siteId: site.id } });
-      }
-
-      // 5. Fatura (competência = mês do período de apuração)
-      const grossValue = header.totalValue ?? dedupedItems.reduce((acc, i) => acc + i.totalValue, 0);
-      let invoice = await tx.invoice.findUnique({
-        where: { contractId_referenceMonth: { contractId: contract.id, referenceMonth } },
+    for (const item of dedupedItems) {
+      const assetTag = item.pat || `IMP-${item.serialNumber}`;
+      const existingAsset = await this.prisma.asset.findFirst({
+        where: { OR: [{ serialNumber: item.serialNumber }, { assetTag }] },
       });
-      let invoiceCreated = false;
-      if (!invoice) {
-        invoice = await tx.invoice.create({
+
+      const description = item.equipmentDescription || item.modelDescription;
+      // Classifica o tipo de equipamento (tabela de preços de referência) com
+      // a lista já carregada em memória (`activeTiers`) — sem round-trip ao
+      // banco por item — para que o Asset já nasça/atualize com o
+      // priceTierId correto, e não só durante a prévia (onde serve apenas
+      // para alertar, sem persistir).
+      const tier = classifyEquipmentTier(item.modelDescription || description, activeTiers);
+      let asset;
+      if (!existingAsset) {
+        asset = await this.prisma.asset.create({
+          data: {
+            assetTag,
+            serialNumber: item.serialNumber,
+            type: detectAssetType(description),
+            ownership: AssetOwnership.LOCADO,
+            brand: detectBrand(item.modelDescription || description),
+            model: item.modelDescription || description,
+            specs: { raw: description, modelCode: item.modelCode },
+            status: AssetStatus.EM_USO,
+            contractId: contract.id,
+            supplierId: supplier.id,
+            monthlyValue: item.totalValue,
+            installationDate: item.installationDate,
+            priceTierId: tier?.id ?? null,
+          },
+        });
+        assetsCreated++;
+      } else {
+        const preserveStatus =
+          existingAsset.status === AssetStatus.MANUTENCAO || existingAsset.status === AssetStatus.DESCARTADO;
+        asset = await this.prisma.asset.update({
+          where: { id: existingAsset.id },
           data: {
             contractId: contract.id,
-            referenceMonth,
-            dueDate: header.periodEnd,
-            grossValue,
-            status: InvoiceStatus.PENDENTE,
+            supplierId: supplier.id,
+            monthlyValue: item.totalValue,
+            installationDate: item.installationDate ?? existingAsset.installationDate,
+            status: preserveStatus ? existingAsset.status : AssetStatus.EM_USO,
+            priceTierId: tier?.id ?? existingAsset.priceTierId,
           },
         });
-        invoiceCreated = true;
-      } else {
-        invoice = await tx.invoice.update({ where: { id: invoice.id }, data: { grossValue } });
+        assetsUpdated++;
       }
 
-      // 6. Ativos + alocações
-      let assetsCreated = 0;
-      let assetsUpdated = 0;
-      let allocationsCreated = 0;
-      let allocationsUpdated = 0;
-      let allocationsClosed = 0;
+      // Alocação ativa neste Site
+      const activeAllocation = await this.prisma.assetAllocation.findFirst({
+        where: { assetId: asset.id, isActive: true },
+      });
+      const allocationNote = `Importado do extrato de locação ${header.contractNumber} — competência ${referenceMonth.toISOString().slice(0, 7)}.`;
+      const assignedToName = item.allocatedTo || 'Não informado';
 
-      for (const item of dedupedItems) {
-        const assetTag = item.pat || `IMP-${item.serialNumber}`;
-        const existingAsset = await tx.asset.findFirst({
-          where: { OR: [{ serialNumber: item.serialNumber }, { assetTag }] },
+      if (!activeAllocation) {
+        await this.prisma.assetAllocation.create({
+          data: {
+            assetId: asset.id,
+            siteId: site.id,
+            assignedToName,
+            deliveryDate: item.installationDate ?? new Date(referenceMonth),
+            isActive: true,
+            notes: allocationNote,
+          },
         });
-
-        const description = item.equipmentDescription || item.modelDescription;
-        // Classifica o tipo de equipamento (tabela de preços de referência)
-        // com a lista já carregada em memória (`activeTiers`, buscada antes
-        // de abrir a transação) — sem round-trip ao banco por item — para que
-        // o Asset já nasça/atualize com o priceTierId correto, e não só
-        // durante a prévia (onde serve apenas para alertar, sem persistir).
-        const tier = classifyEquipmentTier(item.modelDescription || description, activeTiers);
-        let asset;
-        if (!existingAsset) {
-          asset = await tx.asset.create({
-            data: {
-              assetTag,
-              serialNumber: item.serialNumber,
-              type: detectAssetType(description),
-              ownership: AssetOwnership.LOCADO,
-              brand: detectBrand(item.modelDescription || description),
-              model: item.modelDescription || description,
-              specs: { raw: description, modelCode: item.modelCode },
-              status: AssetStatus.EM_USO,
-              contractId: contract.id,
-              supplierId: supplier.id,
-              monthlyValue: item.totalValue,
-              installationDate: item.installationDate,
-              priceTierId: tier?.id ?? null,
-            },
-          });
-          assetsCreated++;
-        } else {
-          const preserveStatus =
-            existingAsset.status === AssetStatus.MANUTENCAO || existingAsset.status === AssetStatus.DESCARTADO;
-          asset = await tx.asset.update({
-            where: { id: existingAsset.id },
-            data: {
-              contractId: contract.id,
-              supplierId: supplier.id,
-              monthlyValue: item.totalValue,
-              installationDate: item.installationDate ?? existingAsset.installationDate,
-              status: preserveStatus ? existingAsset.status : AssetStatus.EM_USO,
-              priceTierId: tier?.id ?? existingAsset.priceTierId,
-            },
-          });
-          assetsUpdated++;
-        }
-
-        // Alocação ativa neste Site
-        const activeAllocation = await tx.assetAllocation.findFirst({
-          where: { assetId: asset.id, isActive: true },
+        allocationsCreated++;
+      } else if (activeAllocation.siteId !== site.id) {
+        // Ativo mudou de obra/filial desde a última importação: encerra a
+        // alocação anterior e abre uma nova no site atual.
+        await this.prisma.assetAllocation.update({
+          where: { id: activeAllocation.id },
+          data: { isActive: false, returnDate: new Date(referenceMonth) },
         });
-        const allocationNote = `Importado do extrato de locação ${header.contractNumber} — competência ${referenceMonth.toISOString().slice(0, 7)}.`;
-        const assignedToName = item.allocatedTo || 'Não informado';
-
-        if (!activeAllocation) {
-          await tx.assetAllocation.create({
-            data: {
-              assetId: asset.id,
-              siteId: site.id,
-              assignedToName,
-              deliveryDate: item.installationDate ?? new Date(referenceMonth),
-              isActive: true,
-              notes: allocationNote,
-            },
-          });
-          allocationsCreated++;
-        } else if (activeAllocation.siteId !== site.id) {
-          // Ativo mudou de obra/filial desde a última importação: encerra a
-          // alocação anterior e abre uma nova no site atual.
-          await tx.assetAllocation.update({
-            where: { id: activeAllocation.id },
-            data: { isActive: false, returnDate: new Date(referenceMonth) },
-          });
-          await tx.assetAllocation.create({
-            data: {
-              assetId: asset.id,
-              siteId: site.id,
-              assignedToName,
-              deliveryDate: item.installationDate ?? new Date(referenceMonth),
-              isActive: true,
-              notes: allocationNote,
-            },
-          });
-          allocationsClosed++;
-          allocationsCreated++;
-        } else if (activeAllocation.assignedToName !== assignedToName) {
-          await tx.assetAllocation.update({
-            where: { id: activeAllocation.id },
-            data: { assignedToName, notes: allocationNote },
-          });
-          allocationsUpdated++;
-        }
+        await this.prisma.assetAllocation.create({
+          data: {
+            assetId: asset.id,
+            siteId: site.id,
+            assignedToName,
+            deliveryDate: item.installationDate ?? new Date(referenceMonth),
+            isActive: true,
+            notes: allocationNote,
+          },
+        });
+        allocationsClosed++;
+        allocationsCreated++;
+      } else if (activeAllocation.assignedToName !== assignedToName) {
+        await this.prisma.assetAllocation.update({
+          where: { id: activeAllocation.id },
+          data: { assignedToName, notes: allocationNote },
+        });
+        allocationsUpdated++;
       }
+    }
 
-      return {
-        clientId: client.id,
-        clientCreated,
-        siteId: site.id,
-        siteCreated,
-        supplierId: supplier.id,
-        supplierCreated,
-        contractId: contract.id,
-        contractCreated,
-        invoiceId: invoice.id,
-        invoiceCreated,
-        assetsCreated,
-        assetsUpdated,
-        allocationsCreated,
-        allocationsUpdated,
-        allocationsClosed,
-      };
-      },
-      // Timeout/maxWait generosos: extratos com dezenas de equipamentos fazem
-      // vários round-trips ao banco dentro da mesma transação, e um banco
-      // serverless (ex.: Neon) pode levar alguns segundos para "acordar" o
-      // compute se estiver ocioso — o padrão do Prisma (5s) já se mostrou
-      // curto demais em produção.
-      { timeout: 30000, maxWait: 15000 },
-    );
+    const result = {
+      clientId: client.id,
+      clientCreated: client.wasCreated,
+      siteId: site.id,
+      siteCreated: site.wasCreated,
+      supplierId: supplier.id,
+      supplierCreated: supplier.wasCreated,
+      contractId: contract.id,
+      contractCreated: contract.wasCreated,
+      invoiceId: invoice.id,
+      invoiceCreated: invoice.wasCreated,
+      assetsCreated,
+      assetsUpdated,
+      allocationsCreated,
+      allocationsUpdated,
+      allocationsClosed,
+    };
 
     return { ...result, warnings };
+  }
+
+  private async upsertClient(cnpjRoot: string, clientName: string) {
+    const existing = await this.prisma.client.findUnique({ where: { cnpjRoot } });
+    if (existing) return { ...existing, wasCreated: false };
+    const created = await this.prisma.client.create({
+      data: { cnpjRoot, name: clientName || cnpjRoot },
+    });
+    return { ...created, wasCreated: true };
+  }
+
+  private async upsertSite(header: ParsedLeaseStatement['header'], clientId: string) {
+    const existing = await this.prisma.site.findUnique({ where: { cnpj: header.clientCnpj } });
+    if (existing) return { ...existing, wasCreated: false };
+    const created = await this.prisma.site.create({
+      data: {
+        clientId,
+        cnpj: header.clientCnpj,
+        name: header.classification || header.clientName,
+        costCenterLabel: header.classification || null,
+        isHeadquarters: false,
+        addressStreet: header.address.street,
+        addressNumber: header.address.number,
+        addressComplement: header.address.complement,
+        addressDistrict: header.address.district,
+        addressCity: header.address.city,
+        addressState: header.address.state,
+        addressZip: header.address.zip,
+        contactName: header.contact.name,
+        contactPhone: header.contact.phone,
+        contactEmail: header.contact.email,
+      },
+    });
+    return { ...created, wasCreated: true };
+  }
+
+  private async upsertSupplier(header: ParsedLeaseStatement['header']) {
+    const existing = await this.prisma.supplier.findUnique({ where: { cnpj: header.supplierCnpj } });
+    if (existing) return { ...existing, wasCreated: false };
+    const created = await this.prisma.supplier.create({
+      data: { cnpj: header.supplierCnpj, name: header.supplierName || header.supplierCnpj },
+    });
+    return { ...created, wasCreated: true };
+  }
+
+  private async upsertContract(
+    header: ParsedLeaseStatement['header'],
+    supplierId: string,
+    siteId: string,
+    itemCount: number,
+  ) {
+    const existing = await this.prisma.contract.findUnique({ where: { contractNumber: header.contractNumber } });
+    if (existing) {
+      if (existing.siteId) return { ...existing, wasCreated: false };
+      const updated = await this.prisma.contract.update({ where: { id: existing.id }, data: { siteId } });
+      return { ...updated, wasCreated: false };
+    }
+    const referenceMonthlyValue = header.totalValue !== null && itemCount > 0 ? header.totalValue / itemCount : 0;
+    const created = await this.prisma.contract.create({
+      data: {
+        contractNumber: header.contractNumber,
+        supplierId,
+        siteId,
+        status: ContractStatus.ATIVO,
+        // O extrato não informa a vigência real do contrato — usamos o
+        // período de apuração como início e +1 ano como referência,
+        // ajustável manualmente na tela de Contratos depois.
+        startDate: header.periodStart,
+        endDate: addYears(header.periodStart, 1),
+        monthlyValuePerAsset: referenceMonthlyValue,
+      },
+    });
+    return { ...created, wasCreated: true };
+  }
+
+  private async upsertInvoice(
+    contractId: string,
+    referenceMonth: Date,
+    header: ParsedLeaseStatement['header'],
+    dedupedItems: ParsedLeaseItem[],
+  ) {
+    const grossValue = header.totalValue ?? dedupedItems.reduce((acc, i) => acc + i.totalValue, 0);
+    const existing = await this.prisma.invoice.findUnique({
+      where: { contractId_referenceMonth: { contractId, referenceMonth } },
+    });
+    if (existing) {
+      const updated = await this.prisma.invoice.update({ where: { id: existing.id }, data: { grossValue } });
+      return { ...updated, wasCreated: false };
+    }
+    const created = await this.prisma.invoice.create({
+      data: {
+        contractId,
+        referenceMonth,
+        dueDate: header.periodEnd,
+        grossValue,
+        status: InvoiceStatus.PENDENTE,
+      },
+    });
+    return { ...created, wasCreated: true };
   }
 
   private async parseFile(file: Express.Multer.File): Promise<ParsedLeaseStatement> {
