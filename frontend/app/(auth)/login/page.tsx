@@ -14,7 +14,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 export default function LoginPage() {
   const router = useRouter();
   const { login } = useAuth();
-  const [email, setEmail] = React.useState('admin@portalti.com');
+  const [email, setEmail] = React.useState('');
   const [password, setPassword] = React.useState('');
   const [error, setError] = React.useState<string | null>(null);
   const [submitting, setSubmitting] = React.useState(false);
@@ -71,10 +71,6 @@ export default function LoginPage() {
             <Button type="submit" className="w-full" disabled={submitting}>
               {submitting ? 'Entrando...' : 'Entrar'}
             </Button>
-            <p className="text-center text-xs text-muted-foreground">
-              Login de teste (criado pelo seed): <strong>admin@portalti.com</strong> / senha{' '}
-              <strong>admin123</strong>
-            </p>
           </form>
         </CardContent>
       </Card>
