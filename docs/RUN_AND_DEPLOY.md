@@ -140,6 +140,25 @@ A hospedagem atual (Netlify para o frontend, Render para o backend) está config
 
 Não é preciso recriar o serviço nem reconfigurar variáveis de ambiente a cada mudança — isso só é necessário se a própria variável mudar de valor (nesse caso, edite direto em **Render → Environment** ou **Netlify → Project configuration → Environment variables**, o que dispara um novo deploy sozinho).
 
+### Quando o `schema.prisma` muda (nova coluna, novo status, nova tabela)
+
+O passo a passo acima (editar → commit → push) é suficiente para código, mas **não é suficiente sozinho quando o `backend/prisma/schema.prisma` muda** — o Render só builda e roda o servidor (`npm run build` + `node dist/main`), ele não aplica migração nenhuma no banco de produção sozinho. Sem esse passo extra, o backend sobe com um código que espera uma coluna/valor de enum que ainda não existe no Neon, e todo request que tocar nisso quebra. Sempre que uma mudança alterar o `schema.prisma` (como a que adicionou o status `DEVOLVIDO` aos ativos):
+
+1. Rode localmente primeiro, contra o seu banco de desenvolvimento (gera o arquivo de migração, que já vai junto no commit):
+   ```powershell
+   cd backend
+   npx prisma migrate dev --name nome-da-mudanca
+   ```
+2. Confirme que o build local ainda passa (`npm run build`) e prossiga com o commit/push normal (seção acima) — o arquivo novo em `backend/prisma/migrations/` precisa estar no commit.
+3. Depois que o Render terminar de subir a nova versão do backend, aplique a MESMA migração no banco de produção (Neon), rodando localmente com a `DATABASE_URL` de produção (mesmo truque do `set-password`):
+   ```powershell
+   cd backend
+   $env:DATABASE_URL="postgresql://...string-de-conexao-do-neon...";  npx prisma migrate deploy
+   ```
+   `migrate deploy` (diferente de `migrate dev`) só aplica migrações já existentes, sem pedir confirmação nem tentar gerar uma nova — é a forma seguro de rodar contra produção.
+
+Se pular o passo 3, o sintoma normalmente é um erro genérico (`Internal server error` ou um erro do Prisma reclamando de uma coluna/valor desconhecido) assim que alguma tela tentar usar o campo novo — mesmo com o deploy do código tendo "dado certo".
+
 ### Trocar a senha de um usuário em produção
 
 Se uma senha vazar ou precisar ser trocada (por exemplo, a senha padrão do seed, que não deve continuar em uso depois que o sistema vai ao ar), rode localmente, apontando para o banco de produção (Neon), sem alterar seu `.env` local:

@@ -124,6 +124,15 @@ enum AssetStatus {
   MANUTENCAO
   DESCARTADO
   EM_TRANSITO
+  // Ativo LOCADO devolvido à locadora (fim do uso deste equipamento
+  // específico no contrato) — diferente de ESTOQUE, que é reservado a ativo
+  // fisicamente disponível para realocação (ex.: PRÓPRIO recolhido, ou
+  // LOCADO temporariamente sem uso mas ainda sob contrato/faturamento).
+  // Um ativo DEVOLVIDO permanece no cadastro só para consulta de histórico —
+  // ele não é mais contado como "ocioso" (findIdle só olha ESTOQUE) porque
+  // não gera mais custo: a próxima fatura importada do extrato da locadora
+  // simplesmente não vai mais trazer esse equipamento.
+  DEVOLVIDO
 }
 
 // Tabela de preços de referência por "tipo" de equipamento (ex.: "Notebook

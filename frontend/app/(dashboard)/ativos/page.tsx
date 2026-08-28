@@ -43,7 +43,7 @@ import { apiFetch, ApiError } from '@/lib/api-client';
 
 type AssetType = 'NOTEBOOK' | 'IMPRESSORA' | 'MONITOR' | 'PERIFERICO' | 'OUTRO';
 type AssetOwnership = 'PROPRIO' | 'LOCADO';
-type AssetStatus = 'EM_USO' | 'ESTOQUE' | 'MANUTENCAO' | 'DESCARTADO' | 'EM_TRANSITO';
+type AssetStatus = 'EM_USO' | 'ESTOQUE' | 'MANUTENCAO' | 'DESCARTADO' | 'EM_TRANSITO' | 'DEVOLVIDO';
 type MovementType = 'ENTREGA' | 'DEVOLUCAO' | 'TRANSFERENCIA' | 'MANUTENCAO_ENTRADA' | 'MANUTENCAO_SAIDA' | 'DESCARTE';
 
 interface Contract {
@@ -124,6 +124,7 @@ const STATUS_LABEL: Record<AssetStatus, string> = {
   MANUTENCAO: 'Manutenção',
   DESCARTADO: 'Descartado',
   EM_TRANSITO: 'Em trânsito',
+  DEVOLVIDO: 'Devolvido',
 };
 
 const STATUS_VARIANT: Record<AssetStatus, 'default' | 'secondary' | 'outline' | 'destructive'> = {
@@ -132,6 +133,7 @@ const STATUS_VARIANT: Record<AssetStatus, 'default' | 'secondary' | 'outline' | 
   MANUTENCAO: 'secondary',
   DESCARTADO: 'destructive',
   EM_TRANSITO: 'secondary',
+  DEVOLVIDO: 'outline',
 };
 
 const MOVEMENT_LABEL: Record<MovementType, string> = {
@@ -270,7 +272,11 @@ export default function AtivosPage() {
   }
 
   async function handleReturn(asset: Asset) {
-    if (!window.confirm(`Confirmar devolução do ativo ${asset.assetTag}?`)) return;
+    const confirmMessage =
+      asset.ownership === 'LOCADO'
+        ? `Confirmar devolução do ativo ${asset.assetTag} à locadora? Ele vai para o status "Devolvido" — deixa de contar como ocioso/gerando custo, mas continua no cadastro para consulta e histórico.`
+        : `Confirmar devolução do ativo ${asset.assetTag}? Ele volta para o estoque, disponível para nova alocação.`;
+    if (!window.confirm(confirmMessage)) return;
     try {
       await apiFetch(`/assets/${asset.id}/return`, {
         method: 'POST',
@@ -290,7 +296,7 @@ export default function AtivosPage() {
       await apiFetch(`/assets/${transferringAsset.id}/transfer`, {
         method: 'POST',
         body: JSON.stringify({
-          assignedToName: transferForm.assignedToName,
+          assignedToName: transferForm.assignedToName.trim() || 'Não informado',
           siteId: transferForm.siteId || undefined,
           transferDate: transferForm.transferDate,
           notes: transferForm.notes || undefined,
@@ -311,7 +317,7 @@ export default function AtivosPage() {
     try {
       await apiFetch(`/assets/${editingAssignee.id}/assigned-to`, {
         method: 'PATCH',
-        body: JSON.stringify({ assignedToName: assignedToValue }),
+        body: JSON.stringify({ assignedToName: assignedToValue.trim() || 'Não informado' }),
       });
       setEditingAssignee(null);
       await loadData();
@@ -558,7 +564,7 @@ export default function AtivosPage() {
                                 <History className="mr-2 h-3.5 w-3.5" /> Ver histórico
                               </DropdownMenuItem>
 
-                              {asset.status !== 'EM_USO' && asset.status !== 'MANUTENCAO' && (
+                              {asset.status !== 'EM_USO' && asset.status !== 'MANUTENCAO' && asset.status !== 'DEVOLVIDO' && (
                                 <DropdownMenuItem
                                   onClick={() => {
                                     setAllocatingAsset(asset);
@@ -596,17 +602,19 @@ export default function AtivosPage() {
                                 </>
                               )}
 
-                              {asset.status !== 'MANUTENCAO' && asset.status !== 'DESCARTADO' && (
-                                <DropdownMenuItem
-                                  onClick={() => {
-                                    setMaintenanceAsset({ asset, mode: 'start' });
-                                    setMaintenanceForm(emptyMaintenanceForm);
-                                    setMaintenanceError(null);
-                                  }}
-                                >
-                                  <Wrench className="mr-2 h-3.5 w-3.5" /> Enviar para manutenção
-                                </DropdownMenuItem>
-                              )}
+                              {asset.status !== 'MANUTENCAO' &&
+                                asset.status !== 'DESCARTADO' &&
+                                asset.status !== 'DEVOLVIDO' && (
+                                  <DropdownMenuItem
+                                    onClick={() => {
+                                      setMaintenanceAsset({ asset, mode: 'start' });
+                                      setMaintenanceForm(emptyMaintenanceForm);
+                                      setMaintenanceError(null);
+                                    }}
+                                  >
+                                    <Wrench className="mr-2 h-3.5 w-3.5" /> Enviar para manutenção
+                                  </DropdownMenuItem>
+                                )}
 
                               {asset.status === 'MANUTENCAO' && (
                                 <DropdownMenuItem
@@ -699,8 +707,7 @@ export default function AtivosPage() {
               <Label htmlFor="assignedToValue">Colaborador responsável</Label>
               <Input
                 id="assignedToValue"
-                required
-                placeholder="Nome do colaborador"
+                placeholder="Nome do colaborador (deixe em branco se ainda não souber)"
                 value={assignedToValue}
                 onChange={(e) => setAssignedToValue(e.target.value)}
               />
@@ -728,8 +735,7 @@ export default function AtivosPage() {
               <Label htmlFor="transferAssignedTo">Novo responsável</Label>
               <Input
                 id="transferAssignedTo"
-                required
-                placeholder="Nome do colaborador ou cliente"
+                placeholder="Nome do colaborador ou cliente (deixe em branco se ainda não souber)"
                 value={transferForm.assignedToName}
                 onChange={(e) => setTransferForm({ ...transferForm, assignedToName: e.target.value })}
               />

@@ -110,35 +110,39 @@ export class AssetsService {
       );
     }
 
-    return this.prisma.$transaction(async (trx) => {
-      const allocation = await trx.assetAllocation.create({
-        data: {
-          assetId,
-          assignedToName: dto.assignedToName,
-          siteId: dto.siteId,
-          departmentId: dto.departmentId,
-          clientName: dto.clientName,
-          deliveryDate: new Date(dto.deliveryDate),
-          notes: dto.notes,
-          allocatedById: userId,
-        },
-      });
-
-      await trx.assetMovement.create({
-        data: {
-          assetId,
-          type: MovementType.ENTREGA,
-          fromStatus: asset.status,
-          toStatus: AssetStatus.EM_USO,
-          loggedById: userId,
-          description: `Entregue para ${dto.assignedToName}`,
-        },
-      });
-
-      await trx.asset.update({ where: { id: assetId }, data: { status: AssetStatus.EM_USO } });
-
-      return allocation;
+    // Sequência simples (sem `$transaction` interativa): contra um banco
+    // serverless com pooler (ex.: Neon), uma transação interativa pode
+    // manter uma conexão presa e ser derrubada no meio do caminho — o mesmo
+    // problema já visto e corrigido na importação de extrato. Como aqui são
+    // só 3 escritas dependentes (nunca reexecutadas em lote), rodar em
+    // sequência é seguro e evita o risco.
+    const allocation = await this.prisma.assetAllocation.create({
+      data: {
+        assetId,
+        assignedToName: dto.assignedToName,
+        siteId: dto.siteId,
+        departmentId: dto.departmentId,
+        clientName: dto.clientName,
+        deliveryDate: new Date(dto.deliveryDate),
+        notes: dto.notes,
+        allocatedById: userId,
+      },
     });
+
+    await this.prisma.assetMovement.create({
+      data: {
+        assetId,
+        type: MovementType.ENTREGA,
+        fromStatus: asset.status,
+        toStatus: AssetStatus.EM_USO,
+        loggedById: userId,
+        description: `Entregue para ${dto.assignedToName}`,
+      },
+    });
+
+    await this.prisma.asset.update({ where: { id: assetId }, data: { status: AssetStatus.EM_USO } });
+
+    return allocation;
   }
 
   /**
@@ -147,7 +151,10 @@ export class AssetsService {
    * movimentação nova, porque fisicamente nada mudou de lugar. Pensado para
    * o caso comum de uma importação de extrato de locação ter deixado o ativo
    * com "Não informado" (o PDF da locadora normalmente não traz o nome do
-   * colaborador, só a obra/local) e o usuário precisar corrigir depois.
+   * colaborador, só a obra/local) e o usuário precisar corrigir depois — ou
+   * para o caso de troca de equipamento entre colaboradores, quando ainda
+   * não se sabe quem ficou com ele (campo enviado em branco vira
+   * "Não informado" novamente, em vez de salvar uma string vazia).
    */
   async updateAssignedTo(assetId: string, dto: UpdateAssignedToDto) {
     await this.findOne(assetId);
@@ -159,13 +166,24 @@ export class AssetsService {
         'Este ativo não possui uma alocação ativa — use "Alocar" para atribuir um responsável.',
       );
     }
+    const assignedToName = dto.assignedToName.trim() || 'Não informado';
     return this.prisma.assetAllocation.update({
       where: { id: activeAllocation.id },
-      data: { assignedToName: dto.assignedToName },
+      data: { assignedToName },
     });
   }
 
-  /** Registra a devolução do ativo, liberando-o para estoque */
+  /**
+   * Registra a devolução do ativo. O status de destino depende da
+   * propriedade: um ativo PRÓPRIO recolhido volta para ESTOQUE (continua
+   * seu, disponível para realocar); um ativo LOCADO devolvido à locadora vai
+   * para DEVOLVIDO — ele não volta a ser "estoque disponível" porque não
+   * está mais fisicamente com a empresa, e não deve ser contado como
+   * ocioso/gerando custo (`findIdle` só considera ESTOQUE). O cadastro e o
+   * histórico completo continuam consultáveis normalmente; a fatura do mês
+   * seguinte simplesmente não vai mais trazer esse equipamento, já que ela
+   * vem do extrato real da locadora, não de um cálculo baseado no status.
+   */
   async returnAsset(assetId: string, dto: ReturnAssetDto, userId: string) {
     const asset = await this.findOne(assetId);
     const activeAllocation = await this.prisma.assetAllocation.findFirst({
@@ -175,27 +193,31 @@ export class AssetsService {
       throw new BadRequestException('Este ativo não possui uma alocação ativa para devolver');
     }
 
-    return this.prisma.$transaction(async (trx) => {
-      const updated = await trx.assetAllocation.update({
-        where: { id: activeAllocation.id },
-        data: { returnDate: new Date(dto.returnDate), isActive: false, notes: dto.notes ?? activeAllocation.notes },
-      });
+    const toStatus = asset.ownership === AssetOwnership.LOCADO ? AssetStatus.DEVOLVIDO : AssetStatus.ESTOQUE;
 
-      await trx.assetMovement.create({
-        data: {
-          assetId,
-          type: MovementType.DEVOLUCAO,
-          fromStatus: asset.status,
-          toStatus: AssetStatus.ESTOQUE,
-          loggedById: userId,
-          description: 'Devolução registrada',
-        },
-      });
-
-      await trx.asset.update({ where: { id: assetId }, data: { status: AssetStatus.ESTOQUE } });
-
-      return updated;
+    // Sequência simples (sem `$transaction` interativa) — ver nota em `allocate()`.
+    const updated = await this.prisma.assetAllocation.update({
+      where: { id: activeAllocation.id },
+      data: { returnDate: new Date(dto.returnDate), isActive: false, notes: dto.notes ?? activeAllocation.notes },
     });
+
+    await this.prisma.assetMovement.create({
+      data: {
+        assetId,
+        type: MovementType.DEVOLUCAO,
+        fromStatus: asset.status,
+        toStatus,
+        loggedById: userId,
+        description:
+          toStatus === AssetStatus.DEVOLVIDO
+            ? 'Devolvido à locadora — fim de uso deste equipamento no contrato'
+            : 'Devolução registrada',
+      },
+    });
+
+    await this.prisma.asset.update({ where: { id: assetId }, data: { status: toStatus } });
+
+    return updated;
   }
 
   /**
@@ -212,45 +234,44 @@ export class AssetsService {
       include: { site: true },
     });
 
-    return this.prisma.$transaction(async (trx) => {
-      if (activeAllocation) {
-        await trx.assetAllocation.update({
-          where: { id: activeAllocation.id },
-          data: { isActive: false, returnDate: new Date(dto.transferDate) },
-        });
-      }
-
-      const newAllocation = await trx.assetAllocation.create({
-        data: {
-          assetId,
-          assignedToName: dto.assignedToName,
-          siteId: dto.siteId,
-          departmentId: dto.departmentId,
-          clientName: dto.clientName,
-          deliveryDate: new Date(dto.transferDate),
-          notes: dto.notes,
-          allocatedById: userId,
-        },
+    // Sequência simples (sem `$transaction` interativa) — ver nota em `allocate()`.
+    if (activeAllocation) {
+      await this.prisma.assetAllocation.update({
+        where: { id: activeAllocation.id },
+        data: { isActive: false, returnDate: new Date(dto.transferDate) },
       });
+    }
 
-      const fromLabel = activeAllocation
-        ? activeAllocation.site?.name ?? activeAllocation.assignedToName
-        : 'estoque';
-      await trx.assetMovement.create({
-        data: {
-          assetId,
-          type: MovementType.TRANSFERENCIA,
-          fromStatus: asset.status,
-          toStatus: AssetStatus.EM_USO,
-          loggedById: userId,
-          description: `Transferido de ${fromLabel} para ${dto.assignedToName}`,
-        },
-      });
-
-      await trx.asset.update({ where: { id: assetId }, data: { status: AssetStatus.EM_USO } });
-
-      return newAllocation;
+    const newAllocation = await this.prisma.assetAllocation.create({
+      data: {
+        assetId,
+        assignedToName: dto.assignedToName,
+        siteId: dto.siteId,
+        departmentId: dto.departmentId,
+        clientName: dto.clientName,
+        deliveryDate: new Date(dto.transferDate),
+        notes: dto.notes,
+        allocatedById: userId,
+      },
     });
+
+    const fromLabel = activeAllocation
+      ? activeAllocation.site?.name ?? activeAllocation.assignedToName
+      : 'estoque';
+    await this.prisma.assetMovement.create({
+      data: {
+        assetId,
+        type: MovementType.TRANSFERENCIA,
+        fromStatus: asset.status,
+        toStatus: AssetStatus.EM_USO,
+        loggedById: userId,
+        description: `Transferido de ${fromLabel} para ${dto.assignedToName}`,
+      },
+    });
+
+    await this.prisma.asset.update({ where: { id: assetId }, data: { status: AssetStatus.EM_USO } });
+
+    return newAllocation;
   }
 
   /**
@@ -266,27 +287,26 @@ export class AssetsService {
       where: { assetId, isActive: true },
     });
 
-    return this.prisma.$transaction(async (trx) => {
-      if (activeAllocation) {
-        await trx.assetAllocation.update({
-          where: { id: activeAllocation.id },
-          data: { isActive: false, returnDate: new Date(dto.date) },
-        });
-      }
-
-      await trx.assetMovement.create({
-        data: {
-          assetId,
-          type: MovementType.MANUTENCAO_ENTRADA,
-          fromStatus: asset.status,
-          toStatus: AssetStatus.MANUTENCAO,
-          loggedById: userId,
-          description: dto.notes ?? 'Enviado para manutenção',
-        },
+    // Sequência simples (sem `$transaction` interativa) — ver nota em `allocate()`.
+    if (activeAllocation) {
+      await this.prisma.assetAllocation.update({
+        where: { id: activeAllocation.id },
+        data: { isActive: false, returnDate: new Date(dto.date) },
       });
+    }
 
-      return trx.asset.update({ where: { id: assetId }, data: { status: AssetStatus.MANUTENCAO } });
+    await this.prisma.assetMovement.create({
+      data: {
+        assetId,
+        type: MovementType.MANUTENCAO_ENTRADA,
+        fromStatus: asset.status,
+        toStatus: AssetStatus.MANUTENCAO,
+        loggedById: userId,
+        description: dto.notes ?? 'Enviado para manutenção',
+      },
     });
+
+    return this.prisma.asset.update({ where: { id: assetId }, data: { status: AssetStatus.MANUTENCAO } });
   }
 
   /** Retorna o ativo da manutenção para o estoque, pronto para nova alocação. */
@@ -296,20 +316,19 @@ export class AssetsService {
       throw new BadRequestException('Este ativo não está em manutenção');
     }
 
-    return this.prisma.$transaction(async (trx) => {
-      await trx.assetMovement.create({
-        data: {
-          assetId,
-          type: MovementType.MANUTENCAO_SAIDA,
-          fromStatus: asset.status,
-          toStatus: AssetStatus.ESTOQUE,
-          loggedById: userId,
-          description: dto.notes ?? 'Retornou da manutenção',
-        },
-      });
-
-      return trx.asset.update({ where: { id: assetId }, data: { status: AssetStatus.ESTOQUE } });
+    // Sequência simples (sem `$transaction` interativa) — ver nota em `allocate()`.
+    await this.prisma.assetMovement.create({
+      data: {
+        assetId,
+        type: MovementType.MANUTENCAO_SAIDA,
+        fromStatus: asset.status,
+        toStatus: AssetStatus.ESTOQUE,
+        loggedById: userId,
+        description: dto.notes ?? 'Retornou da manutenção',
+      },
     });
+
+    return this.prisma.asset.update({ where: { id: assetId }, data: { status: AssetStatus.ESTOQUE } });
   }
 
   /**

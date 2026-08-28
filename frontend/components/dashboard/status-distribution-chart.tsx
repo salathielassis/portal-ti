@@ -9,6 +9,7 @@ const STATUS_LABEL: Record<string, string> = {
   MANUTENCAO: 'Manutenção',
   DESCARTADO: 'Descartado',
   EM_TRANSITO: 'Em trânsito',
+  DEVOLVIDO: 'Devolvido',
 };
 
 const STATUS_COLOR: Record<string, string> = {
@@ -17,6 +18,7 @@ const STATUS_COLOR: Record<string, string> = {
   MANUTENCAO: 'hsl(var(--chart-2))',
   DESCARTADO: 'hsl(var(--chart-5))',
   EM_TRANSITO: 'hsl(var(--chart-4))',
+  DEVOLVIDO: 'hsl(var(--muted-foreground))',
 };
 
 interface StatusDistributionChartProps {

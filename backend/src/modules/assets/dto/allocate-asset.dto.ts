@@ -88,7 +88,10 @@ export class TransferAssetDto {
  * fecha/reabre a alocação, porque fisicamente nada mudou de lugar.
  */
 export class UpdateAssignedToDto {
-  @ApiProperty({ description: 'Nome do colaborador responsável pelo ativo' })
+  @ApiProperty({
+    description:
+      'Nome do colaborador responsável pelo ativo. Pode vir em branco quando ainda não se sabe quem ficou com o equipamento (ex.: troca recente) — nesse caso é salvo como "Não informado".',
+  })
   @IsString()
   assignedToName: string;
 }
