@@ -118,6 +118,14 @@ const emptyAllocateForm = { assignedToName: '', siteId: '', deliveryDate: today(
 const emptyTransferForm = { assignedToName: '', siteId: '', transferDate: today(), notes: '' };
 const emptyMaintenanceForm = { date: today(), notes: '' };
 
+const TYPE_LABEL: Record<AssetType, string> = {
+  NOTEBOOK: 'Notebook',
+  IMPRESSORA: 'Impressora',
+  MONITOR: 'Monitor',
+  PERIFERICO: 'Periférico',
+  OUTRO: 'Outro',
+};
+
 const STATUS_LABEL: Record<AssetStatus, string> = {
   EM_USO: 'Em uso',
   ESTOQUE: 'Estoque',
@@ -166,6 +174,10 @@ export default function AtivosPage() {
   const [loadError, setLoadError] = React.useState<string | null>(null);
   const [statusFilter, setStatusFilter] = React.useState('');
   const [ownershipFilter, setOwnershipFilter] = React.useState('');
+  const [typeFilter, setTypeFilter] = React.useState('');
+  const [contractFilter, setContractFilter] = React.useState('');
+  const [siteFilter, setSiteFilter] = React.useState('');
+  const [searchText, setSearchText] = React.useState('');
 
   const [open, setOpen] = React.useState(false);
   const [form, setForm] = React.useState(emptyForm);
@@ -199,6 +211,9 @@ export default function AtivosPage() {
       const params = new URLSearchParams();
       if (statusFilter) params.set('status', statusFilter);
       if (ownershipFilter) params.set('ownership', ownershipFilter);
+      if (typeFilter) params.set('type', typeFilter);
+      if (contractFilter) params.set('contractId', contractFilter);
+      if (siteFilter) params.set('siteId', siteFilter);
       const query = params.toString() ? `?${params.toString()}` : '';
 
       const [assetsData, contractsData, sitesData] = await Promise.all([
@@ -214,11 +229,24 @@ export default function AtivosPage() {
     } finally {
       setLoading(false);
     }
-  }, [statusFilter, ownershipFilter]);
+  }, [statusFilter, ownershipFilter, typeFilter, contractFilter, siteFilter]);
 
   React.useEffect(() => {
     loadData();
   }, [loadData]);
+
+  // Busca livre (tag, número de série, marca, modelo) é aplicada no cliente
+  // sobre a lista já carregada — evita round-trip/debounce a cada tecla, já
+  // que a lista de ativos não é paginada.
+  const filteredAssets = React.useMemo(() => {
+    const term = searchText.trim().toLowerCase();
+    if (!term) return assets;
+    return assets.filter((asset) =>
+      [asset.assetTag, asset.serialNumber, asset.brand, asset.model]
+        .filter(Boolean)
+        .some((field) => field.toLowerCase().includes(term)),
+    );
+  }, [assets, searchText]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -497,6 +525,36 @@ export default function AtivosPage() {
             <option value="PROPRIO">Próprio</option>
             <option value="LOCADO">Locado</option>
           </Select>
+          <Select className="w-44" value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}>
+            <option value="">Todos os tipos</option>
+            {Object.entries(TYPE_LABEL).map(([value, label]) => (
+              <option key={value} value={value}>
+                {label}
+              </option>
+            ))}
+          </Select>
+          <Select className="w-48" value={contractFilter} onChange={(e) => setContractFilter(e.target.value)}>
+            <option value="">Todos os contratos</option>
+            {contracts.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.contractNumber}
+              </option>
+            ))}
+          </Select>
+          <Select className="w-48" value={siteFilter} onChange={(e) => setSiteFilter(e.target.value)}>
+            <option value="">Todas as filiais</option>
+            {sites.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name}
+              </option>
+            ))}
+          </Select>
+          <Input
+            className="w-56"
+            placeholder="Buscar tag, série, marca ou modelo..."
+            value={searchText}
+            onChange={(e) => setSearchText(e.target.value)}
+          />
         </div>
 
         <Card className="shadow-card">
@@ -509,14 +567,14 @@ export default function AtivosPage() {
 
             {!loadError && loading && <p className="p-5 text-sm text-muted-foreground">Carregando ativos...</p>}
 
-            {!loadError && !loading && assets.length === 0 && (
+            {!loadError && !loading && filteredAssets.length === 0 && (
               <div className="flex flex-col items-center gap-2 p-10 text-center text-sm text-muted-foreground">
                 <Laptop className="h-8 w-8" />
                 Nenhum ativo encontrado com esses filtros.
               </div>
             )}
 
-            {!loadError && !loading && assets.length > 0 && (
+            {!loadError && !loading && filteredAssets.length > 0 && (
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -530,7 +588,7 @@ export default function AtivosPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {assets.map((asset) => {
+                  {filteredAssets.map((asset) => {
                     const activeAllocation = asset.allocations[0] ?? null;
                     return (
                       <TableRow key={asset.id}>

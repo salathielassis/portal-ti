@@ -1,6 +1,6 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
-import { AssetOwnership, AssetStatus, UserRole } from '@prisma/client';
+import { AssetOwnership, AssetStatus, AssetType, UserRole } from '@prisma/client';
 import { AssetsService } from './assets.service';
 import { CreateAssetDto } from './dto/create-asset.dto';
 import { UpdateAssetDto } from './dto/update-asset.dto';
@@ -32,9 +32,19 @@ export class AssetsController {
   }
 
   @Get()
-  @ApiOperation({ summary: 'Lista ativos, com filtros opcionais por status e propriedade' })
-  findAll(@Query('status') status?: AssetStatus, @Query('ownership') ownership?: AssetOwnership) {
-    return this.assetsService.findAll({ status, ownership });
+  @ApiOperation({
+    summary:
+      'Lista ativos, com filtros opcionais por status, propriedade, tipo, contrato, filial e busca livre (tag/série/marca/modelo)',
+  })
+  findAll(
+    @Query('status') status?: AssetStatus,
+    @Query('ownership') ownership?: AssetOwnership,
+    @Query('type') type?: AssetType,
+    @Query('contractId') contractId?: string,
+    @Query('siteId') siteId?: string,
+    @Query('search') search?: string,
+  ) {
+    return this.assetsService.findAll({ status, ownership, type, contractId, siteId, search });
   }
 
   @Get('idle')

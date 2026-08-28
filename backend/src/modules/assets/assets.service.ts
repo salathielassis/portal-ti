@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import { AssetOwnership, AssetStatus, MovementType } from '@prisma/client';
+import { AssetOwnership, AssetStatus, AssetType, MovementType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { EquipmentPricingService } from '../equipment-pricing/equipment-pricing.service';
 import { CreateAssetDto } from './dto/create-asset.dto';
@@ -16,6 +16,12 @@ import {
 interface FindAllFilters {
   status?: AssetStatus;
   ownership?: AssetOwnership;
+  type?: AssetType;
+  contractId?: string;
+  /** Filial/obra do cliente — só é alcançável via a alocação ATIVA do ativo. */
+  siteId?: string;
+  /** Busca livre por tag, número de série, marca ou modelo. */
+  search?: string;
 }
 
 @Injectable()
@@ -48,6 +54,19 @@ export class AssetsService {
       where: {
         ...(filters.status && { status: filters.status }),
         ...(filters.ownership && { ownership: filters.ownership }),
+        ...(filters.type && { type: filters.type }),
+        ...(filters.contractId && { contractId: filters.contractId }),
+        ...(filters.siteId && {
+          allocations: { some: { isActive: true, siteId: filters.siteId } },
+        }),
+        ...(filters.search && {
+          OR: [
+            { assetTag: { contains: filters.search, mode: 'insensitive' } },
+            { serialNumber: { contains: filters.search, mode: 'insensitive' } },
+            { brand: { contains: filters.search, mode: 'insensitive' } },
+            { model: { contains: filters.search, mode: 'insensitive' } },
+          ],
+        }),
       },
       include: {
         supplier: true,
