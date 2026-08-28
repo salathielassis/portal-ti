@@ -2,6 +2,7 @@ import { BadRequestException, Injectable } from '@nestjs/common';
 import { AssetOwnership, AssetStatus, AssetType, ContractStatus, InvoiceStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { EquipmentPricingService } from '../equipment-pricing/equipment-pricing.service';
+import { classifyEquipmentTier } from '../../common/utils/classify-equipment-tier';
 import {
   LeaseStatementParserService,
   ParsedLeaseItem,
@@ -237,7 +238,19 @@ export class LeaseImportService {
     const referenceMonth = firstDayOfMonth(header.periodStart);
     const clientCnpjRoot = header.clientCnpj.slice(0, 8);
 
-    const result = await this.prisma.$transaction(async (tx) => {
+    // Busca os tipos de equipamento (para classificação) FORA da transação e
+    // ANTES de abri-la: são poucos registros e mudam raramente, então não faz
+    // sentido pagar uma consulta ao banco por item dentro do laço. Isso evita
+    // também misturar duas conexões diferentes (a de `tx` e a do client
+    // "solto" usado por EquipmentPricingService) dentro da mesma transação —
+    // em bancos serverless com pooler (ex.: Neon/PgBouncer em modo
+    // transaction), isso podia derrubar a conexão da transação e gerar o erro
+    // "Transaction API error: Transaction not found" ao confirmar a
+    // importação de um extrato com vários equipamentos.
+    const activeTiers = await this.prisma.equipmentPriceTier.findMany({ where: { active: true } });
+
+    const result = await this.prisma.$transaction(
+      async (tx) => {
       // 1. Cliente (grupo empresarial, pela raiz do CNPJ)
       let client = await tx.client.findUnique({ where: { cnpjRoot: clientCnpjRoot } });
       let clientCreated = false;
@@ -344,11 +357,12 @@ export class LeaseImportService {
         });
 
         const description = item.equipmentDescription || item.modelDescription;
-        // Classifica o tipo de equipamento (tabela de preços de referência) —
-        // consultado fora da transação (leitura simples), mas usado aqui para
-        // que o Asset já nasça/atualize com o priceTierId correto, e não só
+        // Classifica o tipo de equipamento (tabela de preços de referência)
+        // com a lista já carregada em memória (`activeTiers`, buscada antes
+        // de abrir a transação) — sem round-trip ao banco por item — para que
+        // o Asset já nasça/atualize com o priceTierId correto, e não só
         // durante a prévia (onde serve apenas para alertar, sem persistir).
-        const tier = await this.equipmentPricing.classify(item.modelDescription || description);
+        const tier = classifyEquipmentTier(item.modelDescription || description, activeTiers);
         let asset;
         if (!existingAsset) {
           asset = await tx.asset.create({
@@ -450,7 +464,14 @@ export class LeaseImportService {
         allocationsUpdated,
         allocationsClosed,
       };
-    });
+      },
+      // Timeout/maxWait generosos: extratos com dezenas de equipamentos fazem
+      // vários round-trips ao banco dentro da mesma transação, e um banco
+      // serverless (ex.: Neon) pode levar alguns segundos para "acordar" o
+      // compute se estiver ocioso — o padrão do Prisma (5s) já se mostrou
+      // curto demais em produção.
+      { timeout: 30000, maxWait: 15000 },
+    );
 
     return { ...result, warnings };
   }
