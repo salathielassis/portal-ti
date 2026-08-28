@@ -190,7 +190,7 @@ erDiagram
 
 ## 2. Estrutura de Pastas
 
-O scaffold entregue já contém os arquivos marcados com `●` — isso inclui, desde a segunda rodada de desenvolvimento, os módulos de Ativos, Contratos, Fornecedores e Financeiro completos (backend com CRUD real + telas no frontend consumindo a API). Os demais itens (sem `●`) são a estrutura-alvo recomendada para o que ainda falta: cadastro de usuários e o job automático de alertas de contrato.
+O scaffold entregue já contém os arquivos marcados com `●` — isso inclui, desde a segunda rodada de desenvolvimento, os módulos de Ativos, Contratos, Fornecedores e Financeiro completos (backend com CRUD real + telas no frontend consumindo a API), e, desde a rodada de deploy em produção, o Dashboard (Módulo D) já consumindo dados reais via `GET /dashboard/summary`. Os demais itens (sem `●`) são a estrutura-alvo recomendada para o que ainda falta: cadastro de usuários e o job automático de alertas de contrato.
 
 ### 2.1 Backend (NestJS + TypeScript + Prisma)
 
@@ -264,10 +264,10 @@ backend/
 │       │   ├── lease-import.service.ts      ●  cascata de upserts (Cliente→Site→Fornecedor→Contrato→...)
 │       │   │                                    + comparação com importação anterior + alerta de preço
 │       │   └── lease-import.module.ts       ●
-│       └── dashboard/                          próxima etapa — hoje o Dashboard usa dados fixos no
-│                                                frontend; ligar aos endpoints reais (`/assets/idle`,
-│                                                `/finance/invoices/summary/monthly-cost`, etc.) é o
-│                                                próximo passo natural, sem precisar de módulo novo
+│       └── dashboard/                       ●  Módulo D — agrega números reais (contagens de Asset,
+│                                                custo mensal via FinanceService, taxa de conciliação,
+│                                                distribuição por status, ativos ociosos via
+│                                                AssetsService.findIdle) em `GET /dashboard/summary`
 ├── prisma/seed.ts                           ●  usuário de teste + fornecedor/contrato/ativo de exemplo
 ├── package.json                            ●
 └── .env.example                            ●
@@ -285,7 +285,7 @@ frontend/
 │   │   └── login/page.tsx                  ●  tela de login (JWT), consome useAuth()
 │   └── (dashboard)/                            grupo de rotas protegidas por <RequireAuth>
 │       ├── layout.tsx                      ●  <RequireAuth><Sidebar />+conteúdo</RequireAuth>
-│       ├── dashboard/page.tsx              ●  Módulo D — hoje com dados fixos (ver seção 7)
+│       ├── dashboard/page.tsx              ●  Módulo D — client component, busca `/dashboard/summary`
 │       ├── ativos/page.tsx                 ●  Módulo A — lista+filtros, cadastro, alocar/transferir/
 │       │                                        devolver/manutenção + drawer de histórico completo
 │       ├── contratos/page.tsx              ●  Módulo B — lista com badge de vencimento, cadastro
@@ -312,9 +312,9 @@ frontend/
 │   │   └── theme-toggle.tsx                ●  dropdown claro/escuro/sistema
 │   ├── dashboard/
 │   │   ├── kpi-card.tsx                    ●
-│   │   ├── cost-evolution-chart.tsx        ●  Recharts — AreaChart
-│   │   ├── status-distribution-chart.tsx   ●  Recharts — PieChart (donut)
-│   │   └── idle-assets-table.tsx           ●
+│   │   ├── cost-evolution-chart.tsx        ●  Recharts — AreaChart, recebe `costEvolution` real via prop
+│   │   ├── status-distribution-chart.tsx   ●  Recharts — PieChart (donut), recebe `statusDistribution` real
+│   │   └── idle-assets-table.tsx           ●  recebe `idleAssets`/`idleMonthlyCost` reais via prop
 │   └── ui/                                 ●  primitivos ao estilo shadcn/ui escritos à mão neste
 │                                                scaffold (button, card, table, badge, input, label,
 │                                                select, textarea, dialog, alert, dropdown-menu,
@@ -455,4 +455,4 @@ Não há sessão de servidor nem cookie: o `AuthContext` (`frontend/contexts/aut
 
 ## 7. Próximos passos sugeridos
 
-Com os módulos A, B e C (partes 1, 2 e 3 — invoices/rateio, conciliação bancária e importação automática de extrato de locação, incluindo tipos de equipamento, transferência/manutenção e relatório mensal — seção 4) implementados de ponta a ponta — backend com CRUD real e frontend consumindo a API —, o que resta é: (1) ligar o Dashboard aos endpoints reais em vez dos dados fixos hoje em `cost-evolution-chart.tsx`, `status-distribution-chart.tsx` e `idle-assets-table.tsx` — os endpoints já existem (`GET /finance/invoices/summary/monthly-cost`, `GET /assets/idle`, contagens de `GET /assets`); (2) um `UsersModule` com CRUD de usuários pela UI (hoje só existem via `prisma/seed.ts` ou inserindo direto no banco); (3) o job de alertas de vencimento de contrato (30/15/7 dias) com `@nestjs/schedule` e um `@Cron('0 8 * * *')` diário que varre `Contract.endDate` e faz `upsert` em `ContractAlert`, respeitando a constraint `@@unique([contractId, threshold])` do schema — hoje o endpoint `GET /contracts/expiring` já existe, só falta o disparo automático (e-mail/notificação) em cima dele; (4) o importador de extrato de locação (seção 3.2) hoje suporta o layout LOCAinfo/AM Serviços — se a empresa tiver outras locadoras com layouts diferentes, cada uma precisará de seu próprio `*-statement-parser.service.ts` (a lógica de cascata de upserts em `LeaseImportService` já é reaproveitável, só o parser muda); (5) não existe ainda um endpoint para **editar** um Site (obra/filial) já criado — hoje ele só é criado automaticamente pela importação (`clientId`, `name`, `costCenterLabel`, endereço/contato) ou manualmente via `POST /clients/:id/sites`, mas corrigir um nome ou completar um endereço depois exige alterar direto no banco; um `PATCH /clients/sites/:id` simples resolveria.
+Com os módulos A, B, C (partes 1, 2 e 3 — invoices/rateio, conciliação bancária e importação automática de extrato de locação, incluindo tipos de equipamento, transferência/manutenção e relatório mensal — seção 4) e D (Dashboard, ligado a `GET /dashboard/summary`) implementados de ponta a ponta — backend com CRUD/agregação real e frontend consumindo a API —, o que resta é: (1) um `UsersModule` com CRUD de usuários pela UI (hoje só existem via `prisma/seed.ts` ou inserindo direto no banco); (2) o job de alertas de vencimento de contrato (30/15/7 dias) com `@nestjs/schedule` e um `@Cron('0 8 * * *')` diário que varre `Contract.endDate` e faz `upsert` em `ContractAlert`, respeitando a constraint `@@unique([contractId, threshold])` do schema — hoje o endpoint `GET /contracts/expiring` já existe, só falta o disparo automático (e-mail/notificação) em cima dele; (3) o importador de extrato de locação (seção 3.2) hoje suporta o layout LOCAinfo/AM Serviços — se a empresa tiver outras locadoras com layouts diferentes, cada uma precisará de seu próprio `*-statement-parser.service.ts` (a lógica de cascata de upserts em `LeaseImportService` já é reaproveitável, só o parser muda); (4) não existe ainda um endpoint para **editar** um Site (obra/filial) já criado — hoje ele só é criado automaticamente pela importação (`clientId`, `name`, `costCenterLabel`, endereço/contato) ou manualmente via `POST /clients/:id/sites`, mas corrigir um nome ou completar um endereço depois exige alterar direto no banco; um `PATCH /clients/sites/:id` simples resolveria.

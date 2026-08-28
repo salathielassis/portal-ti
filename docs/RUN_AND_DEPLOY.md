@@ -43,7 +43,7 @@ npm install
 npm run dev
 ```
 
-Acesse `http://localhost:3000` — a rota raiz redireciona para `/dashboard`, que por sua vez pede login (use o usuário do seed: `admin@portalti.com` / `admin123`). Depois de logado, Ativos, Contratos, Fornecedores, Preços de Referência, Clientes e Obras, Financeiro, Importar Extrato e Conciliação PDF já são telas reais, consumindo a API do backend (cadastro, listagem, alocação/transferência/manutenção de ativos com histórico completo, tabela de preços por tipo de equipamento, marcar fatura como paga, relatório mensal de atividade de ativos, upload de extrato bancário, importação de extrato de locação com alerta de preço e comparação com o mês anterior). Só o Dashboard ainda mostra números fixos de exemplo em vez de dados reais, e "Configurações" é um placeholder — ambos descritos na seção 7 do `ARCHITECTURE.md`.
+Acesse `http://localhost:3000` — a rota raiz redireciona para `/dashboard`, que por sua vez pede login (use o usuário do seed: `admin@portalti.com` / `admin123`, ou a senha que você já tiver trocado — ver seção 4). Depois de logado, Dashboard, Ativos, Contratos, Fornecedores, Preços de Referência, Clientes e Obras, Financeiro, Importar Extrato e Conciliação PDF já são telas reais, consumindo a API do backend (KPIs e gráficos consolidados a partir dos dados reais, cadastro, listagem, alocação/transferência/manutenção de ativos com histórico completo, tabela de preços por tipo de equipamento, marcar fatura como paga, relatório mensal de atividade de ativos, upload de extrato bancário, importação de extrato de locação com alerta de preço e comparação com o mês anterior). Só "Configurações" ainda é um placeholder, descrito na seção 7 do `ARCHITECTURE.md`.
 
 ---
 
@@ -80,14 +80,16 @@ Com o que você tem disponível (Firebase, Netlify, GitHub, cPanel), a combinaç
 | GitHub | fonte da verdade + dispara os deploys | Netlify conecta direto; cPanel normalmente atualiza via `git pull` manual ou Git Deploy do próprio painel |
 | Firebase | opcional, como alternativa ao Netlify só para o frontend estático | Não é um bom encaixe para o backend NestJS (Cloud Functions exigiria reescrever o bootstrap do Nest como função serverless, e ainda faltaria um Postgres gerenciado) |
 
+> **Nota:** no deploy real deste projeto, o backend acabou hospedado no **Render** (não no cPanel) e o banco no **Neon** — ambos free tier — porque o cPanel disponível não tinha "Setup Node.js App". As instruções de cPanel abaixo continuam válidas como alternativa caso você troque de hospedagem futuramente.
+
 ### 3.1 Frontend na Netlify
 
 1. Login na Netlify → **Add new site → Import an existing project** → conecte sua conta do GitHub → escolha o repositório do frontend.
 2. Configurações de build:
    - **Base directory**: `frontend` (se for monorepo) ou vazio (se for repositório dedicado)
    - **Build command**: `npm run build`
-   - **Publish directory**: deixe a Netlify detectar automaticamente (ela usa o plugin oficial `@netlify/plugin-nextjs` para Next.js com App Router e SSR — não precisa configurar nada manualmente)
-3. Em **Environment variables**, adicione `NEXT_PUBLIC_API_URL` apontando para onde o backend vai ficar, por exemplo `https://api.seudominio.com`.
+   - **Publish directory**: em monorepo, defina explicitamente como `frontend/.next` (deixar em branco causa erro quando "Base directory" já está definido) — e confira em **Project configuration → Build & deploy** se o **Runtime** está marcado como **Next.js**; se estiver "Not set", selecione manualmente, senão o site fica com 404 em todas as rotas.
+3. Em **Environment variables**, adicione `NEXT_PUBLIC_API_URL` apontando para onde o backend vai ficar, por exemplo `https://api.seudominio.com` (ou a URL do Render, se for esse o caso).
 4. Deploy. A cada `git push` na branch principal, a Netlify rebuilda sozinha.
 5. Domínio: em **Domain settings**, você pode usar o subdomínio grátis da Netlify (`seu-projeto.netlify.app`) ou apontar um subdomínio seu (ex. `portal.seudominio.com`) criando um registro CNAME no seu DNS apontando para a Netlify — não precisa passar pelo cPanel para isso, a menos que seu DNS também seja gerenciado lá.
 
@@ -123,10 +125,45 @@ Verifique em cPanel → **PostgreSQL Databases** se esse addon existe no seu pla
 
 ### 3.4 Conectando as pontas
 
-Depois de tudo no ar: o frontend na Netlify lê `NEXT_PUBLIC_API_URL=https://api.seudominio.com`, o backend no cPanel aceita CORS de `https://portal.seudominio.com` (o `main.ts` já habilita `app.enableCors({ origin: true })` de forma permissiva para começar — vale restringir para o domínio exato antes de ir para produção de verdade, trocando `origin: true` por `origin: 'https://portal.seudominio.com'`).
+Depois de tudo no ar: o frontend lê `NEXT_PUBLIC_API_URL=https://<sua-api>`, e o backend restringe o CORS apenas ao domínio real do frontend através da variável de ambiente `CORS_ORIGIN` (ex.: `CORS_ORIGIN=https://portal-ti.netlify.app`, podendo listar mais de uma origem separada por vírgula) — configurada direto no painel do Render (ou do cPanel, se for o caso). Sem essa variável definida, o backend libera qualquer origem (útil só em ambiente local); em produção ela deve sempre apontar para o domínio exato do frontend.
 
 ---
 
-## 4. Checklist rápido antes de ir ao ar
+## 4. Como editar o sistema depois que já está no ar
 
-Trocar `JWT_SECRET` do `.env.example` por um valor forte e único em produção é o item que mais gente esquece — sem isso, qualquer token JWT antigo ou de exemplo continua "válido" teoricamente. Também vale restringir o CORS ao domínio real do frontend (item 3.4), rodar `prisma migrate deploy` (não `migrate dev`) em produção, e conferir se o upload de PDF da conciliação tem um destino de armazenamento real configurado em `StorageService` — hoje ele só monta uma URL fake, então plugar S3/Blob (ou mesmo salvar em disco no próprio cPanel, para começar) é necessário antes do módulo de conciliação funcionar de ponta a ponta em produção.
+A hospedagem atual (Netlify para o frontend, Render para o backend) está configurada com **deploy contínuo via GitHub**: os dois serviços ficam "escutando" a branch `main` do repositório. Isso significa que o processo de editar algo é sempre o mesmo, sem precisar mexer manualmente no painel do Netlify ou do Render de novo:
+
+1. Edite o arquivo (localmente, no VS Code).
+2. `git add <arquivo>` e `git commit -m "descrição da mudança"`.
+3. `git push origin main`.
+4. Pronto — o Render detecta o push e refaz o build do backend automaticamente (acompanhe em **Render → seu serviço → Events/Logs**), e a Netlify faz o mesmo para o frontend (acompanhe em **Netlify → seu site → Deploys**). Cada deploy leva de 1 a 3 minutos.
+
+Não é preciso recriar o serviço nem reconfigurar variáveis de ambiente a cada mudança — isso só é necessário se a própria variável mudar de valor (nesse caso, edite direto em **Render → Environment** ou **Netlify → Project configuration → Environment variables**, o que dispara um novo deploy sozinho).
+
+### Trocar a senha de um usuário em produção
+
+Se uma senha vazar ou precisar ser trocada (por exemplo, a senha padrão do seed, que não deve continuar em uso depois que o sistema vai ao ar), rode localmente, apontando para o banco de produção (Neon), sem alterar seu `.env` local:
+
+```powershell
+cd backend
+$env:DATABASE_URL="postgresql://...string-de-conexao-do-neon...";  npm run set-password -- admin@portalti.com "NovaSenhaForte123"
+```
+
+O comando busca o usuário pelo e-mail e grava o hash da nova senha diretamente no banco — não precisa de deploy nem de reiniciar nada.
+
+### Apagar os dados de exemplo do seed
+
+O `prisma:seed` cria alguns registros só para você ter o que testar (fornecedor "TechLease Locações Ltda", contrato "CTR-2026-0001", o ativo "NB-00001" e a fatura de exemplo). Quando o sistema for para uso real, apague esses registros de exemplo com:
+
+```powershell
+cd backend
+$env:DATABASE_URL="postgresql://...string-de-conexao-do-neon...";  npm run remove-seed-demo-data
+```
+
+Isso preserva o que já é real: o usuário admin, o departamento, o cliente "DOISA" (matriz "DOISA NATAL - SEDE") e os 7 tipos de equipamento da tabela de preços de referência. É seguro rodar mais de uma vez.
+
+---
+
+## 5. Checklist rápido antes de ir ao ar
+
+Trocar `JWT_SECRET` do `.env.example` por um valor forte e único em produção é o item que mais gente esquece — sem isso, qualquer token JWT antigo ou de exemplo continua "válido" teoricamente. Também vale restringir o CORS ao domínio real do frontend (item 3.4, já feito neste deploy via `CORS_ORIGIN`), rodar `prisma migrate deploy` (não `migrate dev`) em produção, trocar a senha padrão criada pelo seed (veja o comando `set-password` acima) e conferir se o upload de PDF da conciliação tem um destino de armazenamento real configurado em `StorageService` — hoje ele só monta uma URL fake, então plugar S3/Blob (ou mesmo salvar em disco no próprio cPanel, para começar) é necessário antes do módulo de conciliação funcionar de ponta a ponta em produção.
