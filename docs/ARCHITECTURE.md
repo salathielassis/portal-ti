@@ -238,7 +238,8 @@ backend/
 │       │   ├── equipment-pricing.service.ts ●  CRUD + `classify(description)`
 │       │   └── equipment-pricing.module.ts  ●
 │       ├── assets/                          ●  Módulo A — CRUD de ativos + alocar/devolver/transferir/
-│       │   │                                    manutenção + histórico + `/assets/idle`
+│       │   │                                    manutenção + histórico + `/assets/idle` + `/assets/export`
+│       │   ├── assets-export.service.ts     ●  geração de relatório XLSX/PDF (exceljs + pdfkit, ver 4.5)
 │       │   └── dto/
 │       │       └── allocate-asset.dto.ts    ●  AllocateAssetDto/ReturnAssetDto/TransferAssetDto/
 │       │                                        SendToMaintenanceDto/ReturnFromMaintenanceDto
@@ -297,6 +298,7 @@ frontend/
 │       ├── importar-extrato/page.tsx       ●  upload do extrato → prévia (com alerta de preço e
 │       │                                        comparação com o mês anterior) → confirmar
 │       ├── conciliacao/page.tsx            ●  Módulo C — upload de extrato bancário + revisão de matches
+│       ├── relatorios/page.tsx             ●  exporta ativos (filtrados/selecionados) em XLSX/PDF (ver 4.5)
 │       └── configuracoes/page.tsx          ●  placeholder ("em construção")
 │
 ├── contexts/
@@ -323,7 +325,7 @@ frontend/
 │
 ├── lib/
 │   ├── utils.ts                            ●  helper `cn()` (clsx + tailwind-merge)
-│   └── api-client.ts                       ●  fetch com Bearer token + tratamento de erro (ApiError)
+│   └── api-client.ts                       ●  fetch com Bearer token + ApiError; `apiFetchBlob` p/ download binário (relatórios)
 ├── hooks/                                      próxima etapa — extrair a lógica de fetch das páginas
 │                                                para hooks reutilizáveis (useAssets, useContracts...)
 ├── tailwind.config.ts                      ●  mapeia as classes Tailwind para os tokens CSS
@@ -434,6 +436,25 @@ Pedido literal do usuário: "preciso que o financeiro tenha contagem completa se
 
 A tela mostra os quatro totais como cards, a lista de entradas/saídas com badge "Novo" para equipamento recém-cadastrado, e a listagem completa dos ativos em uso no fim do mês (com responsável, obra e valor mensal) — o "controle completo" que o financeiro pediu para conferir a fatura sem precisar reabrir o PDF.
 
+### 4.5 Exportação de relatórios de ativos (aba "Relatórios")
+
+Arquivos: `backend/src/modules/assets/assets-export.service.ts`, endpoint `GET /assets/export`. Tela: `frontend/app/(dashboard)/relatorios/page.tsx`. Item "Relatórios" na `Sidebar`.
+
+Pedido do usuário: uma aba para exportar os equipamentos — filtrados por centro de custo (obra/filial) ou outros critérios — em XLS ou PDF, para levar à gestão/diretoria sem precisar abrir o sistema.
+
+**Geração no backend, não no navegador.** O arquivo é montado no servidor (`AssetsExportService`, com `exceljs` para XLSX e `pdfkit` para PDF) e devolvido como download por `GET /assets/export?format=xlsx|pdf`. Isso mantém o layout do PDF sob controle, calcula os totais uma única vez e deixa o endpoint reaproveitável (ex.: anexar em e-mail no futuro). O endpoint é declarado **antes** de `GET /assets/:id` no controller para a rota `export` não ser capturada como um `:id`. Como o `apiFetch` padrão do frontend assume JSON, foi adicionado um `apiFetchBlob()` em `lib/api-client.ts` que baixa o binário mantendo o `Authorization: Bearer` no header (por isso não dá para usar um `<a href>` simples).
+
+**Filtros e seleção.** A tela reaproveita os mesmos filtros da tela de Ativos (status, propriedade, tipo, contrato, filial/centro de custo, busca livre) e ainda tem checkbox por linha. Sem seleção manual, exporta todo o conjunto que casa com os filtros; com linhas marcadas, exporta só elas (via `?ids=a,b,c`, que tem precedência sobre os demais filtros). A busca livre é aplicada no cliente para a prévia e reenviada ao backend como `search` na exportação por filtros, para os dois conjuntos baterem.
+
+**O que cada formato traz:**
+
+- **XLSX** — aba *Equipamentos* com **todas** as colunas de referência (patrimônio, nº de série, tipo, marca, modelo, propriedade, status, tipo e valor de referência, valor mensal cobrado, diferença mensal − referência, contrato, fornecedor, centro de custo/obra, cliente, departamento, responsável, datas de instalação/entrega/devolução, valor e data de compra, fim de garantia) + aba *Resumo* (soma do valor mensal por centro de custo, total geral, contagem por status).
+- **PDF** — paisagem A4, um subconjunto das colunas (as que cabem numa página e interessam à diretoria: patrimônio, equipamento, tipo de ref., propriedade, status, centro de custo, responsável, contrato, valor mensal) + o mesmo resumo ao final, com um cabeçalho que registra os filtros aplicados e a data/hora de geração. A tabela repagina sozinha repetindo o cabeçalho.
+
+**Alocação usada nas colunas de localização.** O relatório usa a alocação **mais recente** de cada ativo (ativa ou não), não só a ativa — assim um ativo `DEVOLVIDO` ou `ESTOQUE` ainda mostra o último centro de custo/responsável e a data de devolução, que é o que a gestão quer ver num fechamento.
+
+O endpoint não tem restrição de perfil (qualquer usuário autenticado), igual ao `GET /assets` — o Financeiro é quem mais precisa exportar. Dependências novas do backend: `exceljs`, `pdfkit` (`@types/pdfkit` em dev).
+
 ---
 
 ## 5. Design System — Paleta, Modo Claro/Escuro e Componentes
@@ -466,4 +487,4 @@ Não há sessão de servidor nem cookie: o `AuthContext` (`frontend/contexts/aut
 
 ## 7. Próximos passos sugeridos
 
-Com os módulos A, B, C (partes 1, 2 e 3 — invoices/rateio, conciliação bancária e importação automática de extrato de locação, incluindo tipos de equipamento, transferência/manutenção e relatório mensal — seção 4) e D (Dashboard, ligado a `GET /dashboard/summary`) implementados de ponta a ponta — backend com CRUD/agregação real e frontend consumindo a API —, o que resta é: (1) um `UsersModule` com CRUD de usuários pela UI (hoje só existem via `prisma/seed.ts` ou inserindo direto no banco); (2) o job de alertas de vencimento de contrato (30/15/7 dias) com `@nestjs/schedule` e um `@Cron('0 8 * * *')` diário que varre `Contract.endDate` e faz `upsert` em `ContractAlert`, respeitando a constraint `@@unique([contractId, threshold])` do schema — hoje o endpoint `GET /contracts/expiring` já existe, só falta o disparo automático (e-mail/notificação) em cima dele; (3) o importador de extrato de locação (seção 3.2) hoje suporta o layout LOCAinfo/AM Serviços — se a empresa tiver outras locadoras com layouts diferentes, cada uma precisará de seu próprio `*-statement-parser.service.ts` (a lógica de cascata de upserts em `LeaseImportService` já é reaproveitável, só o parser muda); (4) não existe ainda um endpoint para **editar** um Site (obra/filial) já criado — hoje ele só é criado automaticamente pela importação (`clientId`, `name`, `costCenterLabel`, endereço/contato) ou manualmente via `POST /clients/:id/sites`, mas corrigir um nome ou completar um endereço depois exige alterar direto no banco; um `PATCH /clients/sites/:id` simples resolveria.
+Com os módulos A, B, C (partes 1, 2 e 3 — invoices/rateio, conciliação bancária e importação automática de extrato de locação, incluindo tipos de equipamento, transferência/manutenção, relatório mensal e a aba de exportação de relatórios em XLSX/PDF — seção 4) e D (Dashboard, ligado a `GET /dashboard/summary`) implementados de ponta a ponta — backend com CRUD/agregação real e frontend consumindo a API —, o que resta é: (1) um `UsersModule` com CRUD de usuários pela UI (hoje só existem via `prisma/seed.ts` ou inserindo direto no banco); (2) o job de alertas de vencimento de contrato (30/15/7 dias) com `@nestjs/schedule` e um `@Cron('0 8 * * *')` diário que varre `Contract.endDate` e faz `upsert` em `ContractAlert`, respeitando a constraint `@@unique([contractId, threshold])` do schema — hoje o endpoint `GET /contracts/expiring` já existe, só falta o disparo automático (e-mail/notificação) em cima dele; (3) o importador de extrato de locação (seção 3.2) hoje suporta o layout LOCAinfo/AM Serviços — se a empresa tiver outras locadoras com layouts diferentes, cada uma precisará de seu próprio `*-statement-parser.service.ts` (a lógica de cascata de upserts em `LeaseImportService` já é reaproveitável, só o parser muda); (4) não existe ainda um endpoint para **editar** um Site (obra/filial) já criado — hoje ele só é criado automaticamente pela importação (`clientId`, `name`, `costCenterLabel`, endereço/contato) ou manualmente via `POST /clients/:id/sites`, mas corrigir um nome ou completar um endereço depois exige alterar direto no banco; um `PATCH /clients/sites/:id` simples resolveria.
