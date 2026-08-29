@@ -214,10 +214,17 @@ export class AssetsService {
 
     const toStatus = asset.ownership === AssetOwnership.LOCADO ? AssetStatus.DEVOLVIDO : AssetStatus.ESTOQUE;
 
+    // Anexa a observação da devolução à nota existente da alocação (ex.: a
+    // nota deixada pela importação de extrato) em vez de sobrescrevê-la.
+    const returnNote = dto.notes?.trim();
+    const notes = returnNote
+      ? [activeAllocation.notes, `Devolução: ${returnNote}`].filter(Boolean).join('\n')
+      : activeAllocation.notes;
+
     // Sequência simples (sem `$transaction` interativa) — ver nota em `allocate()`.
     const updated = await this.prisma.assetAllocation.update({
       where: { id: activeAllocation.id },
-      data: { returnDate: new Date(dto.returnDate), isActive: false, notes: dto.notes ?? activeAllocation.notes },
+      data: { returnDate: new Date(dto.returnDate), isActive: false, notes },
     });
 
     await this.prisma.assetMovement.create({

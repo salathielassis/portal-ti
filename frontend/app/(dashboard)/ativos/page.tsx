@@ -117,6 +117,7 @@ const today = () => new Date().toISOString().slice(0, 10);
 const emptyAllocateForm = { assignedToName: '', siteId: '', deliveryDate: today() };
 const emptyTransferForm = { assignedToName: '', siteId: '', transferDate: today(), notes: '' };
 const emptyMaintenanceForm = { date: today(), notes: '' };
+const emptyReturnForm = { returnDate: today(), notes: '' };
 
 const TYPE_LABEL: Record<AssetType, string> = {
   NOTEBOOK: 'Notebook',
@@ -191,6 +192,10 @@ export default function AtivosPage() {
   const [transferringAsset, setTransferringAsset] = React.useState<Asset | null>(null);
   const [transferForm, setTransferForm] = React.useState(emptyTransferForm);
   const [transferError, setTransferError] = React.useState<string | null>(null);
+
+  const [returningAsset, setReturningAsset] = React.useState<Asset | null>(null);
+  const [returnForm, setReturnForm] = React.useState(emptyReturnForm);
+  const [returnError, setReturnError] = React.useState<string | null>(null);
 
   const [editingAssignee, setEditingAssignee] = React.useState<Asset | null>(null);
   const [assignedToValue, setAssignedToValue] = React.useState('');
@@ -299,20 +304,23 @@ export default function AtivosPage() {
     }
   }
 
-  async function handleReturn(asset: Asset) {
-    const confirmMessage =
-      asset.ownership === 'LOCADO'
-        ? `Confirmar devolução do ativo ${asset.assetTag} à locadora? Ele vai para o status "Devolvido" — deixa de contar como ocioso/gerando custo, mas continua no cadastro para consulta e histórico.`
-        : `Confirmar devolução do ativo ${asset.assetTag}? Ele volta para o estoque, disponível para nova alocação.`;
-    if (!window.confirm(confirmMessage)) return;
+  async function handleReturnSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!returningAsset) return;
+    setReturnError(null);
     try {
-      await apiFetch(`/assets/${asset.id}/return`, {
+      await apiFetch(`/assets/${returningAsset.id}/return`, {
         method: 'POST',
-        body: JSON.stringify({ returnDate: today() }),
+        body: JSON.stringify({
+          returnDate: returnForm.returnDate,
+          notes: returnForm.notes || undefined,
+        }),
       });
+      setReturningAsset(null);
+      setReturnForm(emptyReturnForm);
       await loadData();
     } catch (err) {
-      alert(err instanceof ApiError ? err.message : 'Não foi possível registrar a devolução.');
+      setReturnError(err instanceof ApiError ? err.message : 'Não foi possível registrar a devolução.');
     }
   }
 
@@ -654,7 +662,13 @@ export default function AtivosPage() {
                                   >
                                     <ArrowRightLeft className="mr-2 h-3.5 w-3.5" /> Transferir
                                   </DropdownMenuItem>
-                                  <DropdownMenuItem onClick={() => handleReturn(asset)}>
+                                  <DropdownMenuItem
+                                    onClick={() => {
+                                      setReturningAsset(asset);
+                                      setReturnForm(emptyReturnForm);
+                                      setReturnError(null);
+                                    }}
+                                  >
                                     <PackageMinus className="mr-2 h-3.5 w-3.5" /> Devolver
                                   </DropdownMenuItem>
                                 </>
@@ -834,6 +848,49 @@ export default function AtivosPage() {
             </div>
             <DialogFooter>
               <Button type="submit">Confirmar transferência</Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Devolver */}
+      <Dialog open={!!returningAsset} onOpenChange={(v) => !v && setReturningAsset(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Devolver {returningAsset?.assetTag}</DialogTitle>
+          </DialogHeader>
+          <form onSubmit={handleReturnSubmit} className="space-y-4">
+            {returnError && <Alert variant="destructive">{returnError}</Alert>}
+            <p className="text-sm text-muted-foreground">
+              {returningAsset?.ownership === 'LOCADO'
+                ? 'Ativo locado: vai para o status "Devolvido" — deixa de contar como ocioso/gerando custo, mas continua no cadastro para consulta e histórico.'
+                : 'Ativo próprio: volta para o estoque, disponível para nova alocação.'}
+            </p>
+            <div className="space-y-1.5">
+              <Label htmlFor="returnDate">Data da devolução</Label>
+              <Input
+                id="returnDate"
+                type="date"
+                required
+                max={today()}
+                value={returnForm.returnDate}
+                onChange={(e) => setReturnForm({ ...returnForm, returnDate: e.target.value })}
+              />
+              <p className="text-xs text-muted-foreground">
+                Use a data real da devolução (ex.: a data do e-mail de retorno), não a data de hoje.
+              </p>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="returnNotes">Observações (opcional)</Label>
+              <Textarea
+                id="returnNotes"
+                rows={2}
+                value={returnForm.notes}
+                onChange={(e) => setReturnForm({ ...returnForm, notes: e.target.value })}
+              />
+            </div>
+            <DialogFooter>
+              <Button type="submit">Confirmar devolução</Button>
             </DialogFooter>
           </form>
         </DialogContent>
