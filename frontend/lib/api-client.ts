@@ -55,3 +55,24 @@ export async function apiFetch<T = unknown>(path: string, options: RequestInit =
 
   return body as T;
 }
+
+/**
+ * Como `apiFetch`, mas para endpoints que devolvem um arquivo binário
+ * (ex.: exportação de relatório em XLSX/PDF). Mantém o Bearer token no
+ * header (por isso não dá para usar um `<a href>` simples) e, em caso de
+ * erro, tenta ler o corpo JSON de erro padrão do Nest.
+ */
+export async function apiFetchBlob(path: string): Promise<Blob> {
+  const token = getToken();
+  const res = await fetch(`${API_URL}/api${path}`, {
+    headers: { ...(token && { Authorization: `Bearer ${token}` }) },
+  });
+
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    const message = Array.isArray(body?.message) ? body.message.join(', ') : body?.message;
+    throw new ApiError(message ?? `Erro ${res.status} ao gerar o arquivo`, res.status);
+  }
+
+  return res.blob();
+}

@@ -1,7 +1,9 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Res, UseGuards } from '@nestjs/common';
+import type { Response } from 'express';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { AssetOwnership, AssetStatus, AssetType, UserRole } from '@prisma/client';
 import { AssetsService } from './assets.service';
+import { AssetsExportService, ExportFormat } from './assets-export.service';
 import { CreateAssetDto } from './dto/create-asset.dto';
 import { UpdateAssetDto } from './dto/update-asset.dto';
 import {
@@ -22,7 +24,10 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('assets')
 export class AssetsController {
-  constructor(private readonly assetsService: AssetsService) {}
+  constructor(
+    private readonly assetsService: AssetsService,
+    private readonly assetsExportService: AssetsExportService,
+  ) {}
 
   @Post()
   @Roles(UserRole.ADMIN, UserRole.SUPORTE)
@@ -51,6 +56,45 @@ export class AssetsController {
   @ApiOperation({ summary: 'Lista ativos locados parados em estoque (ociosos)' })
   findIdle(@Query('minDays') minDays?: number) {
     return this.assetsService.findIdle(Number(minDays) || 15);
+  }
+
+  @Get('export')
+  @ApiOperation({
+    summary:
+      'Exporta os equipamentos filtrados (ou uma seleção via ?ids=a,b,c) em XLSX (todas as colunas) ou PDF (resumo), com totais por centro de custo e status',
+  })
+  async export(
+    @Res() res: Response,
+    @Query('format') format?: string,
+    @Query('status') status?: AssetStatus,
+    @Query('ownership') ownership?: AssetOwnership,
+    @Query('type') type?: AssetType,
+    @Query('contractId') contractId?: string,
+    @Query('siteId') siteId?: string,
+    @Query('search') search?: string,
+    @Query('ids') ids?: string,
+  ) {
+    const fmt: ExportFormat = format === 'pdf' ? 'pdf' : 'xlsx';
+    const idList = ids
+      ? ids.split(',').map((s) => s.trim()).filter(Boolean)
+      : undefined;
+
+    const { buffer, filename, contentType } = await this.assetsExportService.generate(fmt, {
+      status,
+      ownership,
+      type,
+      contractId,
+      siteId,
+      search,
+      ids: idList,
+    });
+
+    res.set({
+      'Content-Type': contentType,
+      'Content-Disposition': `attachment; filename="${filename}"`,
+      'Content-Length': String(buffer.length),
+    });
+    res.end(buffer);
   }
 
   @Get(':id')

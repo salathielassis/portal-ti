@@ -17,6 +17,7 @@ import {
   Building2,
   FileUp,
   Tags,
+  FileDown,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/components/ui/tooltip';
@@ -37,6 +38,7 @@ const NAV_ITEMS: NavItem[] = [
   { label: 'Financeiro', href: '/financeiro', icon: Wallet },
   { label: 'Importar Extrato', href: '/importar-extrato', icon: FileUp },
   { label: 'Conciliação PDF', href: '/conciliacao', icon: ScanLine },
+  { label: 'Relatórios', href: '/relatorios', icon: FileDown },
 ];
 
 const NAV_ITEMS_FOOTER: NavItem[] = [{ label: 'Configurações', href: '/configuracoes', icon: Settings }];
