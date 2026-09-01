@@ -43,8 +43,12 @@ export class FinanceController {
     summary:
       'Relatório de atividade mensal de ativos: contagem completa de ativos, devolvidos e novos, com data exata de entrada/saída da fatura',
   })
-  assetActivityReport(@Query('month') month: string, @Query('siteId') siteId?: string) {
-    return this.financeService.assetActivityReport(month, siteId);
+  assetActivityReport(
+    @Query('month') month: string,
+    @Query('siteId') siteId?: string,
+    @Query('obraId') obraId?: string,
+  ) {
+    return this.financeService.assetActivityReport(month, siteId, obraId);
   }
 
   @Get(':id')

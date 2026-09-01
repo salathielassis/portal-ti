@@ -18,8 +18,10 @@ interface FindAllFilters {
   ownership?: AssetOwnership;
   type?: AssetType;
   contractId?: string;
-  /** Filial/obra do cliente — só é alcançável via a alocação ATIVA do ativo. */
+  /** Estabelecimento (CNPJ) — só é alcançável via a alocação ATIVA do ativo. */
   siteId?: string;
+  /** Obra / centro de custo — via a alocação ATIVA do ativo. Tem prioridade sobre siteId. */
+  obraId?: string;
   /** Busca livre por tag, número de série, marca ou modelo. */
   search?: string;
 }
@@ -59,6 +61,9 @@ export class AssetsService {
         ...(filters.siteId && {
           allocations: { some: { isActive: true, siteId: filters.siteId } },
         }),
+        ...(filters.obraId && {
+          allocations: { some: { isActive: true, obraId: filters.obraId } },
+        }),
         ...(filters.search && {
           OR: [
             { assetTag: { contains: filters.search, mode: 'insensitive' } },
@@ -72,7 +77,11 @@ export class AssetsService {
         supplier: true,
         contract: true,
         priceTier: true,
-        allocations: { where: { isActive: true }, take: 1, include: { site: true, department: true } },
+        allocations: {
+          where: { isActive: true },
+          take: 1,
+          include: { site: true, obra: true, department: true },
+        },
       },
       orderBy: { createdAt: 'desc' },
     });
@@ -85,7 +94,10 @@ export class AssetsService {
         supplier: true,
         contract: true,
         priceTier: true,
-        allocations: { orderBy: { deliveryDate: 'desc' }, include: { site: true, department: true } },
+        allocations: {
+          orderBy: { deliveryDate: 'desc' },
+          include: { site: true, obra: true, department: true },
+        },
         movements: { orderBy: { occurredAt: 'desc' } },
       },
     });
@@ -116,6 +128,18 @@ export class AssetsService {
     }
   }
 
+  /**
+   * A alocação guarda `obraId` (unidade real) e `siteId` (o CNPJ) em
+   * sincronia. Quando a chamada informa a obra, o site é derivado dela;
+   * quando informa só o site (uso legado / cliente externo), mantém o site.
+   */
+  private async resolveSiteFromObra(obraId?: string, fallbackSiteId?: string): Promise<string | undefined> {
+    if (!obraId) return fallbackSiteId;
+    const obra = await this.prisma.obra.findUnique({ where: { id: obraId } });
+    if (!obra) throw new BadRequestException('Obra informada não existe.');
+    return obra.siteId;
+  }
+
   /** Entrega o ativo para um colaborador/cliente/departamento/obra */
   async allocate(assetId: string, dto: AllocateAssetDto, userId: string) {
     const asset = await this.findOne(assetId);
@@ -129,6 +153,8 @@ export class AssetsService {
       );
     }
 
+    const siteId = await this.resolveSiteFromObra(dto.obraId, dto.siteId);
+
     // Sequência simples (sem `$transaction` interativa): contra um banco
     // serverless com pooler (ex.: Neon), uma transação interativa pode
     // manter uma conexão presa e ser derrubada no meio do caminho — o mesmo
@@ -139,7 +165,8 @@ export class AssetsService {
       data: {
         assetId,
         assignedToName: dto.assignedToName,
-        siteId: dto.siteId,
+        siteId,
+        obraId: dto.obraId,
         departmentId: dto.departmentId,
         clientName: dto.clientName,
         deliveryDate: new Date(dto.deliveryDate),
@@ -257,8 +284,10 @@ export class AssetsService {
     const asset = await this.findOne(assetId);
     const activeAllocation = await this.prisma.assetAllocation.findFirst({
       where: { assetId, isActive: true },
-      include: { site: true },
+      include: { site: true, obra: true },
     });
+
+    const siteId = await this.resolveSiteFromObra(dto.obraId, dto.siteId);
 
     // Sequência simples (sem `$transaction` interativa) — ver nota em `allocate()`.
     if (activeAllocation) {
@@ -272,7 +301,8 @@ export class AssetsService {
       data: {
         assetId,
         assignedToName: dto.assignedToName,
-        siteId: dto.siteId,
+        siteId,
+        obraId: dto.obraId,
         departmentId: dto.departmentId,
         clientName: dto.clientName,
         deliveryDate: new Date(dto.transferDate),
@@ -282,7 +312,7 @@ export class AssetsService {
     });
 
     const fromLabel = activeAllocation
-      ? activeAllocation.site?.name ?? activeAllocation.assignedToName
+      ? activeAllocation.obra?.name ?? activeAllocation.site?.name ?? activeAllocation.assignedToName
       : 'estoque';
     await this.prisma.assetMovement.create({
       data: {

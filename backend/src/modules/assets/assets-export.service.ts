@@ -12,6 +12,7 @@ export interface ExportFilters {
   type?: AssetType;
   contractId?: string;
   siteId?: string;
+  obraId?: string;
   search?: string;
   /** Seleção manual de linhas — quando presente, ignora os demais filtros. */
   ids?: string[];
@@ -139,6 +140,7 @@ export class AssetsExportService {
           ...(f.type && { type: f.type }),
           ...(f.contractId && { contractId: f.contractId }),
           ...(f.siteId && { allocations: { some: { isActive: true, siteId: f.siteId } } }),
+          ...(f.obraId && { allocations: { some: { isActive: true, obraId: f.obraId } } }),
           ...(f.search && {
             OR: [
               { assetTag: { contains: f.search, mode: 'insensitive' } },
@@ -160,7 +162,7 @@ export class AssetsExportService {
         allocations: {
           orderBy: { deliveryDate: 'desc' },
           take: 1,
-          include: { site: { include: { client: true } }, department: true },
+          include: { site: { include: { client: true } }, obra: true, department: true },
         },
       },
       orderBy: [{ status: 'asc' }, { assetTag: 'asc' }],
@@ -184,7 +186,8 @@ export class AssetsExportService {
         priceDelta: ref != null && monthly != null ? Number((monthly - ref).toFixed(2)) : null,
         contractNumber: a.contract?.contractNumber ?? '',
         supplierName: a.supplier?.name ?? '',
-        costCenter: alloc?.site?.costCenterLabel || alloc?.site?.name || '',
+        costCenter:
+          alloc?.obra?.name || alloc?.obra?.costCenterLabel || alloc?.site?.costCenterLabel || alloc?.site?.name || '',
         clientName: alloc?.site?.client?.name || alloc?.clientName || '',
         department: alloc?.department?.name ?? '',
         assignedToName: alloc?.assignedToName ?? '',
@@ -239,7 +242,11 @@ export class AssetsExportService {
     }
     if (f.siteId) {
       const s = await this.prisma.site.findUnique({ where: { id: f.siteId } });
-      if (s) parts.push(`Filial/centro de custo: ${s.costCenterLabel || s.name}`);
+      if (s) parts.push(`Estabelecimento: ${s.costCenterLabel || s.name}`);
+    }
+    if (f.obraId) {
+      const o = await this.prisma.obra.findUnique({ where: { id: f.obraId } });
+      if (o) parts.push(`Obra: ${o.name}`);
     }
     if (f.search) parts.push(`Busca: "${f.search}"`);
     return parts.length ? parts.join('  ·  ') : 'Todos os equipamentos';

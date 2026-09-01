@@ -40,6 +40,11 @@ function addYears(date: Date, years: number): Date {
   return d;
 }
 
+/** Rótulo/chave natural da Obra dentro do Site — a "CLASSIFICAÇÃO" do extrato. */
+function resolveObraLabel(header: ParsedLeaseStatement['header']): string {
+  return (header.classification || '').trim() || '(SEM CLASSIFICAÇÃO)';
+}
+
 /**
  * Serviço de importação em cascata do "Extrato de Locação": a partir de um
  * PDF, resolve/cria Cliente → Site (obra/filial) → Fornecedor → Contrato →
@@ -65,6 +70,7 @@ export class LeaseImportService {
     const { header, items, warnings } = parsed;
 
     const clientCnpjRoot = header.clientCnpj.slice(0, 8);
+    const obraLabel = resolveObraLabel(header);
     const [existingClient, existingSite, existingSupplier, existingContract] = await Promise.all([
       clientCnpjRoot ? this.prisma.client.findUnique({ where: { cnpjRoot: clientCnpjRoot } }) : null,
       header.clientCnpj ? this.prisma.site.findUnique({ where: { cnpj: header.clientCnpj } }) : null,
@@ -73,6 +79,12 @@ export class LeaseImportService {
         ? this.prisma.contract.findUnique({ where: { contractNumber: header.contractNumber } })
         : null,
     ]);
+
+    const existingObra = existingSite
+      ? await this.prisma.obra.findUnique({
+          where: { siteId_costCenterLabel: { siteId: existingSite.id, costCenterLabel: obraLabel } },
+        })
+      : null;
 
     const serials = items.map((i) => i.serialNumber);
     const existingAssets = serials.length
@@ -89,7 +101,7 @@ export class LeaseImportService {
       if (existingInvoice) invoiceAction = 'ATUALIZAR';
     }
 
-    const comparison = existingSite ? await this.compareWithPreviousImport(existingSite.id, items) : null;
+    const comparison = existingObra ? await this.compareWithPreviousImport(existingObra.id, items) : null;
     const priceAlerts = await this.detectPriceMismatches(items);
 
     return {
@@ -106,6 +118,11 @@ export class LeaseImportService {
           action: existingSite ? 'JÁ EXISTE' : 'CRIAR',
           cnpj: header.clientCnpj,
           name: existingSite?.name ?? header.classification,
+        },
+        obra: {
+          action: existingObra ? 'JÁ EXISTE' : 'CRIAR',
+          costCenterLabel: obraLabel,
+          name: existingObra?.name ?? obraLabel,
         },
         supplier: {
           action: existingSupplier ? 'JÁ EXISTE' : 'CRIAR',
@@ -133,17 +150,17 @@ export class LeaseImportService {
   }
 
   /**
-   * Compara os itens deste extrato contra o que estava ativo no Site na
+   * Compara os itens deste extrato contra o que estava ativo na Obra na
    * última importação — pensado para o financeiro pegar, mês a mês, o que
    * mudou sem precisar ler o PDF inteiro de novo: equipamento que sumiu
    * (devolvido/trocado sem aviso?), valor que mudou, equipamento novo.
    */
   private async compareWithPreviousImport(
-    siteId: string,
+    obraId: string,
     items: ParsedLeaseItem[],
   ): Promise<import('./lease-import.types').LeaseImportComparison> {
     const activeAtSite = await this.prisma.assetAllocation.findMany({
-      where: { siteId, isActive: true },
+      where: { obraId, isActive: true },
       include: { asset: true },
     });
 
@@ -268,8 +285,9 @@ export class LeaseImportService {
     // não é necessária aqui dado esse desenho idempotente.
     const client = await this.upsertClient(clientCnpjRoot, header.clientName);
     const site = await this.upsertSite(header, client.id);
+    const obra = await this.upsertObra(site.id, header);
     const supplier = await this.upsertSupplier(header);
-    const contract = await this.upsertContract(header, supplier.id, site.id, items.length);
+    const contract = await this.upsertContract(header, supplier.id, site.id, obra.id, items.length);
     const invoice = await this.upsertInvoice(contract.id, referenceMonth, header, dedupedItems);
 
     // 6. Ativos + alocações
@@ -341,6 +359,7 @@ export class LeaseImportService {
           data: {
             assetId: asset.id,
             siteId: site.id,
+            obraId: obra.id,
             assignedToName,
             deliveryDate: item.installationDate ?? new Date(referenceMonth),
             isActive: true,
@@ -348,9 +367,9 @@ export class LeaseImportService {
           },
         });
         allocationsCreated++;
-      } else if (activeAllocation.siteId !== site.id) {
-        // Ativo mudou de obra/filial desde a última importação: encerra a
-        // alocação anterior e abre uma nova no site atual.
+      } else if (activeAllocation.obraId !== obra.id) {
+        // Ativo mudou de obra desde a última importação: encerra a alocação
+        // anterior e abre uma nova na obra atual.
         await this.prisma.assetAllocation.update({
           where: { id: activeAllocation.id },
           data: { isActive: false, returnDate: new Date(referenceMonth) },
@@ -359,6 +378,7 @@ export class LeaseImportService {
           data: {
             assetId: asset.id,
             siteId: site.id,
+            obraId: obra.id,
             assignedToName,
             deliveryDate: item.installationDate ?? new Date(referenceMonth),
             isActive: true,
@@ -381,6 +401,8 @@ export class LeaseImportService {
       clientCreated: client.wasCreated,
       siteId: site.id,
       siteCreated: site.wasCreated,
+      obraId: obra.id,
+      obraCreated: obra.wasCreated,
       supplierId: supplier.id,
       supplierCreated: supplier.wasCreated,
       contractId: contract.id,
@@ -431,6 +453,23 @@ export class LeaseImportService {
     return { ...created, wasCreated: true };
   }
 
+  /**
+   * Resolve/cria a Obra (centro de custo) dentro do Site, pela CLASSIFICAÇÃO
+   * do extrato. É aqui que obras distintas faturadas no MESMO CNPJ deixam de
+   * colidir num único Site — cada CLASSIFICAÇÃO vira uma Obra própria.
+   */
+  private async upsertObra(siteId: string, header: ParsedLeaseStatement['header']) {
+    const costCenterLabel = resolveObraLabel(header);
+    const existing = await this.prisma.obra.findUnique({
+      where: { siteId_costCenterLabel: { siteId, costCenterLabel } },
+    });
+    if (existing) return { ...existing, wasCreated: false };
+    const created = await this.prisma.obra.create({
+      data: { siteId, costCenterLabel, name: costCenterLabel },
+    });
+    return { ...created, wasCreated: true };
+  }
+
   private async upsertSupplier(header: ParsedLeaseStatement['header']) {
     const existing = await this.prisma.supplier.findUnique({ where: { cnpj: header.supplierCnpj } });
     if (existing) return { ...existing, wasCreated: false };
@@ -444,12 +483,16 @@ export class LeaseImportService {
     header: ParsedLeaseStatement['header'],
     supplierId: string,
     siteId: string,
+    obraId: string,
     itemCount: number,
   ) {
     const existing = await this.prisma.contract.findUnique({ where: { contractNumber: header.contractNumber } });
     if (existing) {
-      if (existing.siteId) return { ...existing, wasCreated: false };
-      const updated = await this.prisma.contract.update({ where: { id: existing.id }, data: { siteId } });
+      const patch: { siteId?: string; obraId?: string } = {};
+      if (!existing.siteId) patch.siteId = siteId;
+      if (!existing.obraId) patch.obraId = obraId;
+      if (Object.keys(patch).length === 0) return { ...existing, wasCreated: false };
+      const updated = await this.prisma.contract.update({ where: { id: existing.id }, data: patch });
       return { ...updated, wasCreated: false };
     }
     const referenceMonthlyValue = header.totalValue !== null && itemCount > 0 ? header.totalValue / itemCount : 0;
@@ -458,6 +501,7 @@ export class LeaseImportService {
         contractNumber: header.contractNumber,
         supplierId,
         siteId,
+        obraId,
         status: ContractStatus.ATIVO,
         // O extrato não informa a vigência real do contrato — usamos o
         // período de apuração como início e +1 ano como referência,

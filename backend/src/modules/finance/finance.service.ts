@@ -115,13 +115,19 @@ export class FinanceService {
    * `siteId` opcional restringe a uma obra/filial específica; omitido, o
    * relatório cobre todos os sites.
    */
-  async assetActivityReport(month: string, siteId?: string) {
+  async assetActivityReport(month: string, siteId?: string, obraId?: string) {
     const { periodStart, periodEnd } = parseMonthRange(month);
 
     let site: { id: string; name: string } | null = null;
     if (siteId) {
       site = await this.prisma.site.findUnique({ where: { id: siteId }, select: { id: true, name: true } });
-      if (!site) throw new NotFoundException('Obra/filial não encontrada');
+      if (!site) throw new NotFoundException('Estabelecimento não encontrado');
+    }
+
+    let obra: { id: string; name: string } | null = null;
+    if (obraId) {
+      obra = await this.prisma.obra.findUnique({ where: { id: obraId }, select: { id: true, name: true } });
+      if (!obra) throw new NotFoundException('Obra não encontrada');
     }
 
     // Toda alocação que se sobrepõe a algum dia do mês: começou até o fim do
@@ -129,10 +135,11 @@ export class FinanceService {
     const allocations = await this.prisma.assetAllocation.findMany({
       where: {
         ...(siteId && { siteId }),
+        ...(obraId && { obraId }),
         deliveryDate: { lte: periodEnd },
         OR: [{ returnDate: null }, { returnDate: { gte: periodStart } }],
       },
-      include: { asset: true, site: true },
+      include: { asset: true, site: true, obra: true },
       orderBy: { deliveryDate: 'asc' },
     });
 
@@ -155,6 +162,8 @@ export class FinanceService {
         model: a.asset.model,
         siteId: a.siteId,
         siteName: a.site?.name ?? null,
+        obraId: a.obraId,
+        obraName: a.obra?.name ?? null,
         type: 'ENTRADA' as const,
         date: a.deliveryDate.toISOString().slice(0, 10),
         isNewEquipment: isNewEquipment(a.asset.createdAt),
@@ -167,6 +176,8 @@ export class FinanceService {
         model: a.asset.model,
         siteId: a.siteId,
         siteName: a.site?.name ?? null,
+        obraId: a.obraId,
+        obraName: a.obra?.name ?? null,
         type: 'SAIDA' as const,
         date: a.returnDate!.toISOString().slice(0, 10),
         isNewEquipment: false,
@@ -181,6 +192,8 @@ export class FinanceService {
       model: a.asset.model,
       siteId: a.siteId,
       siteName: a.site?.name ?? null,
+      obraId: a.obraId,
+      obraName: a.obra?.name ?? null,
       assignedToName: a.assignedToName,
       deliveryDate: a.deliveryDate.toISOString().slice(0, 10),
       monthlyValue: a.asset.monthlyValue ? Number(a.asset.monthlyValue) : null,
@@ -192,6 +205,7 @@ export class FinanceService {
       periodStart: periodStart.toISOString().slice(0, 10),
       periodEnd: periodEnd.toISOString().slice(0, 10),
       site,
+      obra,
       totals: {
         activeAtEnd: activeAtEnd.length,
         activatedDuringMonth: activatedDuringMonth.length,

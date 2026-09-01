@@ -6,7 +6,12 @@ export class AllocateAssetDto {
   @IsString()
   assignedToName: string;
 
-  @ApiProperty({ required: false, description: 'Obra/filial do cliente onde o ativo será instalado' })
+  @ApiProperty({ required: false, description: 'Obra / centro de custo onde o ativo será instalado (o site/CNPJ é derivado dela)' })
+  @IsOptional()
+  @IsUUID()
+  obraId?: string;
+
+  @ApiProperty({ required: false, description: 'Estabelecimento (Site/CNPJ) — uso legado; prefira obraId' })
   @IsOptional()
   @IsUUID()
   siteId?: string;
@@ -16,7 +21,7 @@ export class AllocateAssetDto {
   @IsUUID()
   departmentId?: string;
 
-  @ApiProperty({ required: false, description: 'Preencher quando o ativo vai para um cliente externo sem Site cadastrado' })
+  @ApiProperty({ required: false, description: 'Preencher quando o ativo vai para um cliente externo sem obra cadastrada' })
   @IsOptional()
   @IsString()
   clientName?: string;
@@ -53,7 +58,12 @@ export class TransferAssetDto {
   @IsString()
   assignedToName: string;
 
-  @ApiProperty({ required: false, description: 'Nova obra/filial de destino' })
+  @ApiProperty({ required: false, description: 'Nova obra / centro de custo de destino (o site/CNPJ é derivado dela)' })
+  @IsOptional()
+  @IsUUID()
+  obraId?: string;
+
+  @ApiProperty({ required: false, description: 'Estabelecimento (Site/CNPJ) de destino — uso legado; prefira obraId' })
   @IsOptional()
   @IsUUID()
   siteId?: string;

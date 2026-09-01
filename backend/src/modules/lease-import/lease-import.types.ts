@@ -27,6 +27,7 @@ export interface LeaseImportPreview {
   diff: {
     client: { action: 'CRIAR' | 'JÁ EXISTE'; cnpjRoot: string; name: string };
     site: { action: 'CRIAR' | 'JÁ EXISTE'; cnpj: string; name: string };
+    obra: { action: 'CRIAR' | 'JÁ EXISTE'; costCenterLabel: string; name: string };
     supplier: { action: 'CRIAR' | 'JÁ EXISTE'; cnpj: string; name: string };
     contract: { action: 'CRIAR' | 'JÁ EXISTE'; contractNumber: string };
     invoice: { action: 'CRIAR' | 'ATUALIZAR'; referenceMonth: string; grossValue: number | null };
@@ -43,6 +44,8 @@ export interface LeaseImportSummary {
   clientCreated: boolean;
   siteId: string;
   siteCreated: boolean;
+  obraId: string;
+  obraCreated: boolean;
   supplierId: string;
   supplierCreated: boolean;
   contractId: string;

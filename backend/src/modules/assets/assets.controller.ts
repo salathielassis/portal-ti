@@ -47,9 +47,10 @@ export class AssetsController {
     @Query('type') type?: AssetType,
     @Query('contractId') contractId?: string,
     @Query('siteId') siteId?: string,
+    @Query('obraId') obraId?: string,
     @Query('search') search?: string,
   ) {
-    return this.assetsService.findAll({ status, ownership, type, contractId, siteId, search });
+    return this.assetsService.findAll({ status, ownership, type, contractId, siteId, obraId, search });
   }
 
   @Get('idle')
@@ -71,6 +72,7 @@ export class AssetsController {
     @Query('type') type?: AssetType,
     @Query('contractId') contractId?: string,
     @Query('siteId') siteId?: string,
+    @Query('obraId') obraId?: string,
     @Query('search') search?: string,
     @Query('ids') ids?: string,
   ) {
@@ -85,6 +87,7 @@ export class AssetsController {
       type,
       contractId,
       siteId,
+      obraId,
       search,
       ids: idList,
     });
