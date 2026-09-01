@@ -1,7 +1,7 @@
 'use client';
 
 import * as React from 'react';
-import { Building2, MapPin, Plus } from 'lucide-react';
+import { Building2, MapPin, Pencil, Plus, HardHat } from 'lucide-react';
 import { Header } from '@/components/layout/header';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -19,6 +19,14 @@ import {
 } from '@/components/ui/dialog';
 import { apiFetch, ApiError } from '@/lib/api-client';
 
+interface Obra {
+  id: string;
+  name: string;
+  costCenterLabel: string;
+  active: boolean;
+  _count: { allocations: number; contracts: number };
+}
+
 interface Site {
   id: string;
   name: string;
@@ -27,6 +35,7 @@ interface Site {
   isHeadquarters: boolean;
   addressCity: string | null;
   addressState: string | null;
+  obras: Obra[];
 }
 
 interface ClientWithSites {
@@ -53,11 +62,11 @@ const emptySiteForm = {
 };
 
 /**
- * Lista os Clientes (grupos empresariais) e suas Obras/Filiais (Sites), com
- * cadastro manual dos dois — na prática a maioria dos Sites nasce
- * automaticamente pela importação de extrato de locação, mas cadastro manual
- * é necessário para uma obra nova que ainda não teve extrato importado, ou
- * para completar/corrigir dados.
+ * Hierarquia Cliente (grupo empresarial) → Estabelecimento (Site, com CNPJ
+ * próprio) → Obra (centro de custo / canteiro, a CLASSIFICAÇÃO do extrato).
+ * A maioria nasce automaticamente pela importação de extrato; o cadastro e a
+ * renomeação manual servem para dar nome às obras que a importação antiga
+ * deixou rotuladas só pelo número do contrato.
  */
 export default function ClientesPage() {
   const [clients, setClients] = React.useState<ClientWithSites[]>([]);
@@ -73,6 +82,9 @@ export default function ClientesPage() {
   const [siteForm, setSiteForm] = React.useState(emptySiteForm);
   const [siteFormError, setSiteFormError] = React.useState<string | null>(null);
   const [submittingSite, setSubmittingSite] = React.useState(false);
+
+  const [obraDialogSite, setObraDialogSite] = React.useState<Site | null>(null);
+  const [editingObra, setEditingObra] = React.useState<Obra | null>(null);
 
   const loadClients = React.useCallback(async () => {
     setLoading(true);
@@ -136,7 +148,7 @@ export default function ClientesPage() {
       setSiteDialogClient(null);
       await loadClients();
     } catch (err) {
-      setSiteFormError(err instanceof ApiError ? err.message : 'Não foi possível cadastrar a obra/filial.');
+      setSiteFormError(err instanceof ApiError ? err.message : 'Não foi possível cadastrar o estabelecimento.');
     } finally {
       setSubmittingSite(false);
     }
@@ -151,8 +163,9 @@ export default function ClientesPage() {
           <div>
             <h1 className="text-2xl font-semibold tracking-tight">Clientes e Obras</h1>
             <p className="text-sm text-muted-foreground">
-              Cada cliente é um grupo empresarial (identificado pela raiz do CNPJ); cada obra/filial abaixo dele é
-              um Site com CNPJ próprio, onde os ativos ficam de fato alocados.
+              Cliente = grupo empresarial (raiz do CNPJ). Abaixo dele, cada <strong>estabelecimento</strong> tem
+              CNPJ próprio (matriz, filial de um estado, SPE); e cada <strong>obra</strong> dentro do
+              estabelecimento é o centro de custo onde os ativos ficam de fato alocados.
             </p>
           </div>
 
@@ -239,31 +252,70 @@ export default function ClientesPage() {
                       setSiteFormError(null);
                     }}
                   >
-                    <Plus className="mr-1.5 h-3.5 w-3.5" /> Nova obra/filial
+                    <Plus className="mr-1.5 h-3.5 w-3.5" /> Novo estabelecimento
                   </Button>
                 </div>
 
                 {client.sites.length === 0 && (
-                  <p className="text-sm text-muted-foreground">Nenhuma obra/filial cadastrada ainda.</p>
+                  <p className="text-sm text-muted-foreground">Nenhum estabelecimento cadastrado ainda.</p>
                 )}
 
-                <div className="space-y-2">
+                <div className="space-y-3">
                   {client.sites.map((site) => (
-                    <div
-                      key={site.id}
-                      className="flex items-start justify-between gap-3 rounded-lg border border-border p-3"
-                    >
-                      <div className="flex items-start gap-2">
-                        <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
-                        <div>
-                          <p className="text-sm font-medium">{site.name}</p>
-                          <p className="text-xs text-muted-foreground">
-                            CNPJ {site.cnpj}
-                            {site.addressCity && ` · ${site.addressCity}${site.addressState ? '/' + site.addressState : ''}`}
-                          </p>
+                    <div key={site.id} className="rounded-lg border border-border p-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex items-start gap-2">
+                          <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+                          <div>
+                            <p className="text-sm font-medium">
+                              {site.name}
+                              {site.isHeadquarters && (
+                                <Badge className="ml-2 align-middle">Matriz</Badge>
+                              )}
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              CNPJ {site.cnpj}
+                              {site.addressCity &&
+                                ` · ${site.addressCity}${site.addressState ? '/' + site.addressState : ''}`}
+                            </p>
+                          </div>
                         </div>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setObraDialogSite(site)}
+                        >
+                          <Plus className="mr-1 h-3.5 w-3.5" /> Obra
+                        </Button>
                       </div>
-                      {site.isHeadquarters && <Badge>Matriz</Badge>}
+
+                      <div className="mt-2 space-y-1.5 pl-6">
+                        {site.obras.length === 0 && (
+                          <p className="text-xs text-muted-foreground">Nenhuma obra neste estabelecimento.</p>
+                        )}
+                        {site.obras.map((obra) => (
+                          <div
+                            key={obra.id}
+                            className="flex items-center justify-between gap-2 rounded-md bg-muted/40 px-2.5 py-1.5"
+                          >
+                            <div className="flex min-w-0 items-center gap-1.5">
+                              <HardHat className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                              <span className="truncate text-sm">{obra.name}</span>
+                              {!obra.active && (
+                                <Badge variant="outline" className="shrink-0">
+                                  inativa
+                                </Badge>
+                              )}
+                            </div>
+                            <div className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
+                              <span className="tabular-nums">{obra._count.allocations} ativos</span>
+                              <Button variant="ghost" size="sm" onClick={() => setEditingObra(obra)}>
+                                <Pencil className="h-3.5 w-3.5" />
+                              </Button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -273,21 +325,23 @@ export default function ClientesPage() {
         </div>
       </main>
 
-      {/* Nova obra/filial */}
+      {/* Novo estabelecimento (Site) */}
       <Dialog open={!!siteDialogClient} onOpenChange={(v) => !v && setSiteDialogClient(null)}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
-            <DialogTitle>Nova obra/filial {siteDialogClient ? `— ${siteDialogClient.name}` : ''}</DialogTitle>
+            <DialogTitle>
+              Novo estabelecimento {siteDialogClient ? `— ${siteDialogClient.name}` : ''}
+            </DialogTitle>
           </DialogHeader>
           <form onSubmit={handleCreateSite} className="space-y-4">
             {siteFormError && <Alert variant="destructive">{siteFormError}</Alert>}
             <div className="grid grid-cols-2 gap-3">
               <div className="col-span-2 space-y-1.5">
-                <Label htmlFor="siteName">Nome da obra/filial</Label>
+                <Label htmlFor="siteName">Nome do estabelecimento</Label>
                 <Input
                   id="siteName"
                   required
-                  placeholder="EQUIP - BARRO ALTO GO"
+                  placeholder="DOISA FILIAL GO"
                   value={siteForm.name}
                   onChange={(e) => setSiteForm({ ...siteForm, name: e.target.value })}
                 />
@@ -301,15 +355,6 @@ export default function ClientesPage() {
                   placeholder="03092799000858"
                   value={siteForm.cnpj}
                   onChange={(e) => setSiteForm({ ...siteForm, cnpj: e.target.value })}
-                />
-              </div>
-              <div className="col-span-2 space-y-1.5">
-                <Label htmlFor="costCenterLabel">Centro de custo (opcional)</Label>
-                <Input
-                  id="costCenterLabel"
-                  placeholder="EQUIP - BARRO ALTO GO"
-                  value={siteForm.costCenterLabel}
-                  onChange={(e) => setSiteForm({ ...siteForm, costCenterLabel: e.target.value })}
                 />
               </div>
               <div className="space-y-1.5">
@@ -378,7 +423,7 @@ export default function ClientesPage() {
                 onChange={(e) => setSiteForm({ ...siteForm, isHeadquarters: e.target.checked })}
                 className="h-4 w-4 rounded border-border"
               />
-              Esta é a matriz/sede do cliente
+              Este é a matriz/sede do cliente
             </label>
             <DialogFooter>
               <Button type="submit" disabled={submittingSite}>
@@ -388,6 +433,137 @@ export default function ClientesPage() {
           </form>
         </DialogContent>
       </Dialog>
+
+      <ObraDialog
+        site={obraDialogSite}
+        onClose={() => setObraDialogSite(null)}
+        onSaved={() => {
+          setObraDialogSite(null);
+          loadClients();
+        }}
+      />
+      <ObraDialog
+        obra={editingObra}
+        onClose={() => setEditingObra(null)}
+        onSaved={() => {
+          setEditingObra(null);
+          loadClients();
+        }}
+      />
     </>
+  );
+}
+
+/** Cria (recebe `site`) ou edita (recebe `obra`) uma obra. */
+function ObraDialog({
+  site,
+  obra,
+  onClose,
+  onSaved,
+}: {
+  site?: Site | null;
+  obra?: Obra | null;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const isEdit = !!obra;
+  const open = !!site || !!obra;
+
+  const [name, setName] = React.useState('');
+  const [label, setLabel] = React.useState('');
+  const [active, setActive] = React.useState(true);
+  const [error, setError] = React.useState<string | null>(null);
+  const [submitting, setSubmitting] = React.useState(false);
+
+  React.useEffect(() => {
+    if (obra) {
+      setName(obra.name);
+      setLabel(obra.costCenterLabel);
+      setActive(obra.active);
+    } else {
+      setName('');
+      setLabel('');
+      setActive(true);
+    }
+    setError(null);
+  }, [obra, site]);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setSubmitting(true);
+    try {
+      if (isEdit && obra) {
+        await apiFetch(`/clients/obras/${obra.id}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ name, costCenterLabel: label, active }),
+        });
+      } else if (site) {
+        await apiFetch(`/clients/sites/${site.id}/obras`, {
+          method: 'POST',
+          body: JSON.stringify({ name, costCenterLabel: label }),
+        });
+      }
+      onSaved();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Não foi possível salvar a obra.');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>
+            {isEdit ? `Editar obra — ${obra?.name}` : `Nova obra${site ? ` — ${site.name}` : ''}`}
+          </DialogTitle>
+        </DialogHeader>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          {error && <Alert variant="destructive">{error}</Alert>}
+          <div className="space-y-1.5">
+            <Label htmlFor="obra-name">Nome da obra</Label>
+            <Input
+              id="obra-name"
+              required
+              placeholder="Oficina, Urbanização, Barro Alto GO…"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="obra-label">Classificação (rótulo do extrato)</Label>
+            <Input
+              id="obra-label"
+              required
+              placeholder="EQUIP - BARRO ALTO GO"
+              value={label}
+              onChange={(e) => setLabel(e.target.value)}
+            />
+            <p className="text-xs text-muted-foreground">
+              Texto exato do campo CLASSIFICAÇÃO no extrato da locadora — é o que liga a importação a esta obra.
+              Só mude se souber o valor exato.
+            </p>
+          </div>
+          {isEdit && (
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={active}
+                onChange={(e) => setActive(e.target.checked)}
+                className="h-4 w-4 rounded border-border"
+              />
+              Obra ativa
+            </label>
+          )}
+          <DialogFooter>
+            <Button type="submit" disabled={submitting}>
+              {submitting ? 'Salvando...' : 'Salvar'}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }

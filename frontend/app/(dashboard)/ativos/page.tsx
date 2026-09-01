@@ -57,6 +57,14 @@ interface Site {
   client: { id: string; name: string };
 }
 
+interface Obra {
+  id: string;
+  name: string;
+  costCenterLabel: string;
+  active: boolean;
+  site: { id: string; name: string; cnpj: string; addressState: string | null };
+}
+
 interface PriceTier {
   id: string;
   label: string;
@@ -73,13 +81,14 @@ interface Asset {
   model: string;
   contract: Contract | null;
   priceTier: PriceTier | null;
-  allocations: { assignedToName: string; site: Site | null }[];
+  allocations: { assignedToName: string; site: Site | null; obra: { id: string; name: string } | null }[];
 }
 
 interface AllocationHistoryEntry {
   id: string;
   assignedToName: string;
   site: { id: string; name: string } | null;
+  obra: { id: string; name: string } | null;
   department: { id: string; name: string } | null;
   clientName: string | null;
   deliveryDate: string;
@@ -114,8 +123,8 @@ const emptyForm = {
 
 const today = () => new Date().toISOString().slice(0, 10);
 
-const emptyAllocateForm = { assignedToName: '', siteId: '', deliveryDate: today() };
-const emptyTransferForm = { assignedToName: '', siteId: '', transferDate: today(), notes: '' };
+const emptyAllocateForm = { assignedToName: '', obraId: '', deliveryDate: today() };
+const emptyTransferForm = { assignedToName: '', obraId: '', transferDate: today(), notes: '' };
 const emptyMaintenanceForm = { date: today(), notes: '' };
 const emptyReturnForm = { returnDate: today(), notes: '' };
 
@@ -163,21 +172,26 @@ function formatDateTime(value: string) {
   return new Date(value).toLocaleString('pt-BR');
 }
 
-function locationLabel(alloc: { site: { name: string } | null; assignedToName: string }) {
-  return alloc.site ? `${alloc.assignedToName} · ${alloc.site.name}` : alloc.assignedToName;
+function locationLabel(alloc: {
+  site: { name: string } | null;
+  obra: { name: string } | null;
+  assignedToName: string;
+}) {
+  const place = alloc.obra?.name ?? alloc.site?.name;
+  return place ? `${alloc.assignedToName} · ${place}` : alloc.assignedToName;
 }
 
 export default function AtivosPage() {
   const [assets, setAssets] = React.useState<Asset[]>([]);
   const [contracts, setContracts] = React.useState<Contract[]>([]);
-  const [sites, setSites] = React.useState<Site[]>([]);
+  const [obras, setObras] = React.useState<Obra[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [loadError, setLoadError] = React.useState<string | null>(null);
   const [statusFilter, setStatusFilter] = React.useState('');
   const [ownershipFilter, setOwnershipFilter] = React.useState('');
   const [typeFilter, setTypeFilter] = React.useState('');
   const [contractFilter, setContractFilter] = React.useState('');
-  const [siteFilter, setSiteFilter] = React.useState('');
+  const [obraFilter, setObraFilter] = React.useState('');
   const [searchText, setSearchText] = React.useState('');
 
   const [open, setOpen] = React.useState(false);
@@ -218,23 +232,23 @@ export default function AtivosPage() {
       if (ownershipFilter) params.set('ownership', ownershipFilter);
       if (typeFilter) params.set('type', typeFilter);
       if (contractFilter) params.set('contractId', contractFilter);
-      if (siteFilter) params.set('siteId', siteFilter);
+      if (obraFilter) params.set('obraId', obraFilter);
       const query = params.toString() ? `?${params.toString()}` : '';
 
-      const [assetsData, contractsData, sitesData] = await Promise.all([
+      const [assetsData, contractsData, obrasData] = await Promise.all([
         apiFetch<Asset[]>(`/assets${query}`),
         apiFetch<Contract[]>('/contracts'),
-        apiFetch<Site[]>('/clients/sites'),
+        apiFetch<Obra[]>('/clients/obras'),
       ]);
       setAssets(assetsData);
       setContracts(contractsData);
-      setSites(sitesData);
+      setObras(obrasData);
     } catch (err) {
       setLoadError(err instanceof ApiError ? err.message : 'Não foi possível carregar os ativos.');
     } finally {
       setLoading(false);
     }
-  }, [statusFilter, ownershipFilter, typeFilter, contractFilter, siteFilter]);
+  }, [statusFilter, ownershipFilter, typeFilter, contractFilter, obraFilter]);
 
   React.useEffect(() => {
     loadData();
@@ -292,7 +306,7 @@ export default function AtivosPage() {
         method: 'POST',
         body: JSON.stringify({
           assignedToName: allocateForm.assignedToName,
-          siteId: allocateForm.siteId || undefined,
+          obraId: allocateForm.obraId || undefined,
           deliveryDate: allocateForm.deliveryDate,
         }),
       });
@@ -333,7 +347,7 @@ export default function AtivosPage() {
         method: 'POST',
         body: JSON.stringify({
           assignedToName: transferForm.assignedToName.trim() || 'Não informado',
-          siteId: transferForm.siteId || undefined,
+          obraId: transferForm.obraId || undefined,
           transferDate: transferForm.transferDate,
           notes: transferForm.notes || undefined,
         }),
@@ -549,11 +563,11 @@ export default function AtivosPage() {
               </option>
             ))}
           </Select>
-          <Select className="w-48" value={siteFilter} onChange={(e) => setSiteFilter(e.target.value)}>
-            <option value="">Todas as filiais</option>
-            {sites.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name}
+          <Select className="w-56" value={obraFilter} onChange={(e) => setObraFilter(e.target.value)}>
+            <option value="">Todas as obras</option>
+            {obras.map((o) => (
+              <option key={o.id} value={o.id}>
+                {o.site.name} · {o.name}
               </option>
             ))}
           </Select>
@@ -731,16 +745,16 @@ export default function AtivosPage() {
               />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="allocateSiteId">Obra/filial (opcional)</Label>
+              <Label htmlFor="allocateObraId">Obra / centro de custo (opcional)</Label>
               <Select
-                id="allocateSiteId"
-                value={allocateForm.siteId}
-                onChange={(e) => setAllocateForm({ ...allocateForm, siteId: e.target.value })}
+                id="allocateObraId"
+                value={allocateForm.obraId}
+                onChange={(e) => setAllocateForm({ ...allocateForm, obraId: e.target.value })}
               >
-                <option value="">Sem obra/filial (uso interno)</option>
-                {sites.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.client.name} · {s.name}
+                <option value="">Sem obra (uso interno)</option>
+                {obras.map((o) => (
+                  <option key={o.id} value={o.id}>
+                    {o.site.name} · {o.name}
                   </option>
                 ))}
               </Select>
@@ -813,16 +827,16 @@ export default function AtivosPage() {
               />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="transferSiteId">Nova obra/filial (opcional)</Label>
+              <Label htmlFor="transferObraId">Nova obra / centro de custo (opcional)</Label>
               <Select
-                id="transferSiteId"
-                value={transferForm.siteId}
-                onChange={(e) => setTransferForm({ ...transferForm, siteId: e.target.value })}
+                id="transferObraId"
+                value={transferForm.obraId}
+                onChange={(e) => setTransferForm({ ...transferForm, obraId: e.target.value })}
               >
-                <option value="">Sem obra/filial (uso interno)</option>
-                {sites.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.client.name} · {s.name}
+                <option value="">Sem obra (uso interno)</option>
+                {obras.map((o) => (
+                  <option key={o.id} value={o.id}>
+                    {o.site.name} · {o.name}
                   </option>
                 ))}
               </Select>
@@ -984,7 +998,9 @@ export default function AtivosPage() {
                         <div className="flex items-center justify-between gap-2">
                           <p className="font-medium">
                             {a.assignedToName}
-                            {a.site && <span className="text-muted-foreground"> · {a.site.name}</span>}
+                            {(a.obra || a.site) && (
+                              <span className="text-muted-foreground"> · {a.obra?.name ?? a.site?.name}</span>
+                            )}
                             {a.department && <span className="text-muted-foreground"> · {a.department.name}</span>}
                           </p>
                           {a.isActive && <Badge>Ativa</Badge>}

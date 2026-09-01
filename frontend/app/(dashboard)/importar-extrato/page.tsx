@@ -73,6 +73,7 @@ interface PreviewResponse {
   diff: {
     client: { action: string; cnpjRoot: string; name: string };
     site: { action: string; cnpj: string; name: string };
+    obra: { action: string; costCenterLabel: string; name: string };
     supplier: { action: string; cnpj: string; name: string };
     contract: { action: string; contractNumber: string };
     invoice: { action: string; referenceMonth: string; grossValue: number | null };
@@ -85,6 +86,7 @@ interface PreviewResponse {
 interface ExecuteResponse {
   clientCreated: boolean;
   siteCreated: boolean;
+  obraCreated: boolean;
   supplierCreated: boolean;
   contractCreated: boolean;
   invoiceCreated: boolean;
@@ -237,9 +239,14 @@ export default function ImportarExtratoPage() {
                     detail={`${preview.diff.client.name} (raiz CNPJ ${preview.diff.client.cnpjRoot})`}
                   />
                   <DiffRow
-                    label="Obra / Filial (Site)"
+                    label="Estabelecimento (CNPJ)"
                     action={preview.diff.site.action}
                     detail={`${preview.diff.site.name} — CNPJ ${preview.diff.site.cnpj}`}
+                  />
+                  <DiffRow
+                    label="Obra / Centro de custo"
+                    action={preview.diff.obra.action}
+                    detail={`${preview.diff.obra.name} — classificação "${preview.diff.obra.costCenterLabel}"`}
                   />
                   <DiffRow
                     label="Fornecedor"
@@ -447,7 +454,8 @@ export default function ImportarExtratoPage() {
 
               <div className="flex flex-wrap gap-2">
                 {result.clientCreated && <Badge variant="secondary">Cliente criado</Badge>}
-                {result.siteCreated && <Badge variant="secondary">Obra/Site criado</Badge>}
+                {result.siteCreated && <Badge variant="secondary">Estabelecimento criado</Badge>}
+                {result.obraCreated && <Badge variant="secondary">Obra criada</Badge>}
                 {result.supplierCreated && <Badge variant="secondary">Fornecedor criado</Badge>}
                 {result.contractCreated && <Badge variant="secondary">Contrato criado</Badge>}
                 {result.invoiceCreated && <Badge variant="secondary">Fatura criada</Badge>}

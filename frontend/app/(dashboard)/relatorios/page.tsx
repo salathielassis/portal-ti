@@ -28,10 +28,10 @@ interface Contract {
   contractNumber: string;
 }
 
-interface Site {
+interface Obra {
   id: string;
   name: string;
-  client: { id: string; name: string };
+  site: { id: string; name: string };
 }
 
 interface Asset {
@@ -44,7 +44,11 @@ interface Asset {
   status: AssetStatus;
   monthlyValue: string | null;
   priceTier: { id: string; label: string } | null;
-  allocations: { assignedToName: string; site: { name: string; costCenterLabel: string | null } | null }[];
+  allocations: {
+    assignedToName: string;
+    site: { name: string; costCenterLabel: string | null } | null;
+    obra: { name: string } | null;
+  }[];
 }
 
 const TYPE_LABEL: Record<AssetType, string> = {
@@ -81,7 +85,7 @@ function currency(value: number) {
 
 function costCenterOf(asset: Asset) {
   const alloc = asset.allocations[0];
-  return alloc?.site?.costCenterLabel || alloc?.site?.name || '—';
+  return alloc?.obra?.name || alloc?.site?.costCenterLabel || alloc?.site?.name || '—';
 }
 
 /**
@@ -93,7 +97,7 @@ function costCenterOf(asset: Asset) {
 export default function RelatoriosPage() {
   const [assets, setAssets] = React.useState<Asset[]>([]);
   const [contracts, setContracts] = React.useState<Contract[]>([]);
-  const [sites, setSites] = React.useState<Site[]>([]);
+  const [obras, setObras] = React.useState<Obra[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [loadError, setLoadError] = React.useState<string | null>(null);
 
@@ -101,7 +105,7 @@ export default function RelatoriosPage() {
   const [ownershipFilter, setOwnershipFilter] = React.useState('');
   const [typeFilter, setTypeFilter] = React.useState('');
   const [contractFilter, setContractFilter] = React.useState('');
-  const [siteFilter, setSiteFilter] = React.useState('');
+  const [obraFilter, setObraFilter] = React.useState('');
   const [searchText, setSearchText] = React.useState('');
 
   const [selectedIds, setSelectedIds] = React.useState<Set<string>>(new Set());
@@ -117,17 +121,17 @@ export default function RelatoriosPage() {
       if (ownershipFilter) params.set('ownership', ownershipFilter);
       if (typeFilter) params.set('type', typeFilter);
       if (contractFilter) params.set('contractId', contractFilter);
-      if (siteFilter) params.set('siteId', siteFilter);
+      if (obraFilter) params.set('obraId', obraFilter);
       const query = params.toString() ? `?${params.toString()}` : '';
 
-      const [assetsData, contractsData, sitesData] = await Promise.all([
+      const [assetsData, contractsData, obrasData] = await Promise.all([
         apiFetch<Asset[]>(`/assets${query}`),
         apiFetch<Contract[]>('/contracts'),
-        apiFetch<Site[]>('/clients/sites'),
+        apiFetch<Obra[]>('/clients/obras'),
       ]);
       setAssets(assetsData);
       setContracts(contractsData);
-      setSites(sitesData);
+      setObras(obrasData);
       // Descarta seleções de linhas que sumiram após mudar os filtros.
       setSelectedIds((prev) => {
         const valid = new Set(assetsData.map((a) => a.id));
@@ -140,7 +144,7 @@ export default function RelatoriosPage() {
     } finally {
       setLoading(false);
     }
-  }, [statusFilter, ownershipFilter, typeFilter, contractFilter, siteFilter]);
+  }, [statusFilter, ownershipFilter, typeFilter, contractFilter, obraFilter]);
 
   React.useEffect(() => {
     loadData();
@@ -198,7 +202,7 @@ export default function RelatoriosPage() {
         if (ownershipFilter) params.set('ownership', ownershipFilter);
         if (typeFilter) params.set('type', typeFilter);
         if (contractFilter) params.set('contractId', contractFilter);
-        if (siteFilter) params.set('siteId', siteFilter);
+        if (obraFilter) params.set('obraId', obraFilter);
         if (searchText.trim()) params.set('search', searchText.trim());
       }
 
@@ -265,11 +269,11 @@ export default function RelatoriosPage() {
                   </option>
                 ))}
               </Select>
-              <Select className="w-48" value={siteFilter} onChange={(e) => setSiteFilter(e.target.value)}>
-                <option value="">Todas as filiais / centros de custo</option>
-                {sites.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.client.name} · {s.name}
+              <Select className="w-56" value={obraFilter} onChange={(e) => setObraFilter(e.target.value)}>
+                <option value="">Todas as obras / centros de custo</option>
+                {obras.map((o) => (
+                  <option key={o.id} value={o.id}>
+                    {o.site.name} · {o.name}
                   </option>
                 ))}
               </Select>
