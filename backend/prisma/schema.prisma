@@ -23,51 +23,54 @@ enum UserRole {
 }
 
 model User {
-  id            String   @id @default(uuid())
-  name          String
-  email         String   @unique
-  passwordHash  String
-  role          UserRole @default(SUPORTE)
-  department    Department? @relation(fields: [departmentId], references: [id])
-  departmentId  String?
-  active        Boolean  @default(true)
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  id           String      @id @default(uuid())
+  name         String
+  email        String      @unique
+  passwordHash String
+  role         UserRole    @default(SUPORTE)
+  department   Department? @relation(fields: [departmentId], references: [id])
+  departmentId String?
+  active       Boolean     @default(true)
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
 
-  allocationsMade   AssetAllocation[] @relation("AllocatedBy")
-  movementsLogged   AssetMovement[]   @relation("MovementBy")
-  reconciliationsDone Reconciliation[] @relation("ReconciledBy")
+  allocationsMade     AssetAllocation[] @relation("AllocatedBy")
+  movementsLogged     AssetMovement[]   @relation("MovementBy")
+  reconciliationsDone Reconciliation[]  @relation("ReconciledBy")
 
   @@map("users")
 }
 
 model Department {
-  id        String   @id @default(uuid())
-  name      String   @unique
-  costCenterCode String? @unique
-  users     User[]
-  allocations AssetAllocation[]
+  id                 String                  @id @default(uuid())
+  name               String                  @unique
+  costCenterCode     String?                 @unique
+  users              User[]
+  allocations        AssetAllocation[]
   invoiceAllocations InvoiceCostAllocation[]
-  createdAt DateTime @default(now())
+  createdAt          DateTime                @default(now())
 
   @@map("departments")
 }
 
 // ----------------------------------------------------------------------------
-// CLIENTES E OBRAS/FILIAIS
+// CLIENTES, ESTABELECIMENTOS (CNPJ) E OBRAS
 //
-// Um Client é o grupo empresarial (ex.: "DOISA"), identificado pela raiz do
-// CNPJ (8 primeiros dígitos, compartilhada entre matriz e todas as filiais).
-// Cada local físico — a própria matriz/sede inclusive — é um Site, com CNPJ
-// completo próprio. É em Site que o ativo é fisicamente alocado, e é o campo
-// "CLASSIFICAÇÃO" do extrato da locadora (ex.: "EQUIP - BARRO ALTO GO") que
-// vira o nome/centro de custo de um Site.
+// Hierarquia: Client -> Site -> Obra.
+//  - Client: grupo empresarial (ex.: "DOISA"), identificado pela raiz do CNPJ
+//    (8 primeiros dígitos).
+//  - Site: estabelecimento com CNPJ completo próprio (matriz, filial de um
+//    estado, SPE/consórcio). É o que a locadora usa para emitir a fatura.
+//  - Obra: centro de custo / canteiro — o campo "CLASSIFICAÇÃO" do extrato
+//    (ex.: "EQUIP - BARRO ALTO GO", "OFICINA"). É a unidade real de alocação
+//    de ativo e de custo. Várias Obras podem compartilhar um mesmo Site/CNPJ
+//    (obras no estado da matriz faturam no CNPJ da matriz).
 // ----------------------------------------------------------------------------
 
 model Client {
   id        String   @id @default(uuid())
-  name      String                       // ex.: "DOISA"
-  cnpjRoot  String   @unique             // 8 primeiros dígitos do CNPJ (raiz), ex.: "03092799"
+  name      String // ex.: "DOISA"
+  cnpjRoot  String   @unique // 8 primeiros dígitos do CNPJ (raiz), ex.: "03092799"
   sites     Site[]
   createdAt DateTime @default(now())
 
@@ -75,30 +78,56 @@ model Client {
 }
 
 model Site {
-  id                 String   @id @default(uuid())
-  client             Client   @relation(fields: [clientId], references: [id])
-  clientId           String
-  name               String                    // ex.: "Barro Alto GO"
-  costCenterLabel    String?                   // campo "CLASSIFICAÇÃO" do extrato, ex.: "EQUIP - BARRO ALTO GO"
-  cnpj               String   @unique          // CNPJ completo desta filial/obra (ou da matriz)
-  isHeadquarters     Boolean  @default(false)  // true para a matriz/sede
+  id              String  @id @default(uuid())
+  client          Client  @relation(fields: [clientId], references: [id])
+  clientId        String
+  name            String // ex.: "Barro Alto GO"
+  costCenterLabel String? // campo "CLASSIFICAÇÃO" do extrato, ex.: "EQUIP - BARRO ALTO GO"
+  cnpj            String  @unique // CNPJ completo desta filial/obra (ou da matriz)
+  isHeadquarters  Boolean @default(false) // true para a matriz/sede
 
-  addressStreet      String?
-  addressNumber      String?
-  addressComplement  String?
-  addressDistrict    String?
-  addressCity        String?
-  addressState       String?
-  addressZip         String?
-  contactName        String?
-  contactPhone       String?
-  contactEmail       String?
+  addressStreet     String?
+  addressNumber     String?
+  addressComplement String?
+  addressDistrict   String?
+  addressCity       String?
+  addressState      String?
+  addressZip        String?
+  contactName       String?
+  contactPhone      String?
+  contactEmail      String?
 
-  allocations        AssetAllocation[]
-  contracts          Contract[]
-  createdAt          DateTime @default(now())
+  allocations AssetAllocation[]
+  contracts   Contract[]
+  obras       Obra[]
+  createdAt   DateTime          @default(now())
 
   @@map("sites")
+}
+
+// Obra / centro de custo / canteiro. É a unidade real de alocação de ativo e
+// de custo — o campo "CLASSIFICAÇÃO" do extrato da locadora (ex.:
+// "EQUIP - BARRO ALTO GO", "OFICINA", "URBANIZAÇÃO") vira uma Obra. Várias
+// Obras podem compartilhar o mesmo CNPJ (Site): obras no mesmo estado da
+// matriz faturam no CNPJ da matriz; obras em outro estado, no CNPJ da filial
+// daquele estado. Por isso Obra fica ABAIXO de Site (o estabelecimento com
+// CNPJ), e não é o Site que carrega a classificação.
+model Obra {
+  id              String  @id @default(uuid())
+  site            Site    @relation(fields: [siteId], references: [id])
+  siteId          String
+  name            String // legível, ex.: "Barro Alto GO"
+  costCenterLabel String // campo "CLASSIFICAÇÃO" do extrato — chave natural dentro do Site
+  active          Boolean @default(true)
+
+  allocations AssetAllocation[]
+  contracts   Contract[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([siteId, costCenterLabel])
+  @@map("obras")
 }
 
 // ----------------------------------------------------------------------------
@@ -165,41 +194,41 @@ model EquipmentPriceTier {
 }
 
 model Asset {
-  id               String         @id @default(uuid())
-  assetTag         String         @unique // Nº de patrimônio
-  serialNumber     String         @unique
-  type             AssetType
-  ownership        AssetOwnership
-  brand            String
-  model            String
-  specs            Json?          // CPU, RAM, SSD, etc. (schema flexível)
-  status           AssetStatus    @default(ESTOQUE)
+  id           String         @id @default(uuid())
+  assetTag     String         @unique // Nº de patrimônio
+  serialNumber String         @unique
+  type         AssetType
+  ownership    AssetOwnership
+  brand        String
+  model        String
+  specs        Json? // CPU, RAM, SSD, etc. (schema flexível)
+  status       AssetStatus    @default(ESTOQUE)
 
   // Tipo classificado automaticamente por palavra-chave (ver EquipmentPriceTier) — null = não classificado
-  priceTier        EquipmentPriceTier? @relation(fields: [priceTierId], references: [id])
-  priceTierId      String?
+  priceTier   EquipmentPriceTier? @relation(fields: [priceTierId], references: [id])
+  priceTierId String?
 
   // Se locado, vínculo com contrato/fornecedor
-  contract         Contract?      @relation(fields: [contractId], references: [id])
-  contractId       String?
-  supplier         Supplier?      @relation(fields: [supplierId], references: [id])
-  supplierId       String?
+  contract   Contract? @relation(fields: [contractId], references: [id])
+  contractId String?
+  supplier   Supplier? @relation(fields: [supplierId], references: [id])
+  supplierId String?
 
-  purchaseValue    Decimal?       @db.Decimal(12, 2) // se próprio
-  purchaseDate     DateTime?
-  warrantyEndDate  DateTime?
+  purchaseValue   Decimal?  @db.Decimal(12, 2) // se próprio
+  purchaseDate    DateTime?
+  warrantyEndDate DateTime?
 
   // Se locado: valor de locação individual deste equipamento (varia por
   // modelo dentro do mesmo contrato — não é sempre igual a
   // contract.monthlyValuePerAsset) e data em que foi instalado no site.
-  monthlyValue     Decimal?       @db.Decimal(12, 2)
+  monthlyValue     Decimal?  @db.Decimal(12, 2)
   installationDate DateTime?
 
-  allocations      AssetAllocation[]
-  movements        AssetMovement[]
+  allocations AssetAllocation[]
+  movements   AssetMovement[]
 
-  createdAt        DateTime       @default(now())
-  updatedAt        DateTime       @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([status])
   @@index([ownership])
@@ -208,26 +237,28 @@ model Asset {
 
 // Alocação atual e histórica (quem está usando o ativo agora / no passado)
 model AssetAllocation {
-  id            String     @id @default(uuid())
-  asset         Asset      @relation(fields: [assetId], references: [id])
-  assetId       String
+  id      String @id @default(uuid())
+  asset   Asset  @relation(fields: [assetId], references: [id])
+  assetId String
 
-  assignedToName String    // nome do colaborador/responsável (pode não ter User no sistema)
-  department    Department? @relation(fields: [departmentId], references: [id])
-  departmentId  String?
-  site          Site?      @relation(fields: [siteId], references: [id])
-  siteId        String?    // obra/filial do cliente onde o ativo está instalado
-  clientName    String?    // texto livre legado — preferir `site` quando disponível
+  assignedToName String // nome do colaborador/responsável (pode não ter User no sistema)
+  department     Department? @relation(fields: [departmentId], references: [id])
+  departmentId   String?
+  site           Site?       @relation(fields: [siteId], references: [id])
+  siteId         String? // estabelecimento (CNPJ) — mantido em sincronia com obra.siteId
+  obra           Obra?       @relation(fields: [obraId], references: [id])
+  obraId         String? // obra / centro de custo onde o ativo está instalado
+  clientName     String? // texto livre legado — preferir `obra`/`site` quando disponível
 
-  deliveryDate  DateTime
-  returnDate    DateTime?  // null = alocação ativa
-  isActive      Boolean    @default(true)
+  deliveryDate DateTime
+  returnDate   DateTime? // null = alocação ativa
+  isActive     Boolean   @default(true)
 
-  allocatedBy   User?      @relation("AllocatedBy", fields: [allocatedById], references: [id])
+  allocatedBy   User?   @relation("AllocatedBy", fields: [allocatedById], references: [id])
   allocatedById String?
 
-  notes         String?
-  createdAt     DateTime   @default(now())
+  notes     String?
+  createdAt DateTime @default(now())
 
   @@index([assetId, isActive])
   @@map("asset_allocations")
@@ -264,16 +295,16 @@ model AssetMovement {
 // ----------------------------------------------------------------------------
 
 model Supplier {
-  id            String     @id @default(uuid())
-  name          String
-  cnpj          String     @unique
-  slaHours      Int?       // SLA de atendimento em horas
-  contactName   String?
-  contactEmail  String?
-  contactPhone  String?
-  assets        Asset[]
-  contracts     Contract[]
-  createdAt     DateTime   @default(now())
+  id           String     @id @default(uuid())
+  name         String
+  cnpj         String     @unique
+  slaHours     Int? // SLA de atendimento em horas
+  contactName  String?
+  contactEmail String?
+  contactPhone String?
+  assets       Asset[]
+  contracts    Contract[]
+  createdAt    DateTime   @default(now())
 
   @@map("suppliers")
 }
@@ -286,27 +317,29 @@ enum ContractStatus {
 }
 
 model Contract {
-  id                   String         @id @default(uuid())
-  contractNumber       String         @unique
-  supplier             Supplier       @relation(fields: [supplierId], references: [id])
-  supplierId           String
-  site                 Site?          @relation(fields: [siteId], references: [id])
-  siteId               String?        // obra/filial do cliente coberta por este contrato
-  status               ContractStatus @default(ATIVO)
+  id             String         @id @default(uuid())
+  contractNumber String         @unique
+  supplier       Supplier       @relation(fields: [supplierId], references: [id])
+  supplierId     String
+  site           Site?          @relation(fields: [siteId], references: [id])
+  siteId         String? // estabelecimento (CNPJ) coberto por este contrato — derivável de obra.site
+  obra           Obra?          @relation(fields: [obraId], references: [id])
+  obraId         String? // obra / centro de custo coberto por este contrato
+  status         ContractStatus @default(ATIVO)
 
   startDate            DateTime
-  endDate               DateTime
-  monthlyValuePerAsset Decimal        @db.Decimal(12, 2) // valor de referência — cada Asset pode ter monthlyValue próprio (preços variam por modelo)
-  earlyTerminationFee  Decimal?       @db.Decimal(12, 2)
-  annualReadjustIndex  String?        // ex: "IPCA", "IGP-M"
-  annualReadjustPct    Decimal?       @db.Decimal(5, 2)
+  endDate              DateTime
+  monthlyValuePerAsset Decimal  @db.Decimal(12, 2) // valor de referência — cada Asset pode ter monthlyValue próprio (preços variam por modelo)
+  earlyTerminationFee  Decimal? @db.Decimal(12, 2)
+  annualReadjustIndex  String? // ex: "IPCA", "IGP-M"
+  annualReadjustPct    Decimal? @db.Decimal(5, 2)
 
-  assets               Asset[]
-  invoices             Invoice[]
-  alerts               ContractAlert[]
+  assets   Asset[]
+  invoices Invoice[]
+  alerts   ContractAlert[]
 
-  createdAt            DateTime       @default(now())
-  updatedAt            DateTime       @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([endDate])
   @@map("contracts")
@@ -320,12 +353,12 @@ enum AlertThreshold {
 
 // Alertas de vencimento gerados por job agendado
 model ContractAlert {
-  id          String         @id @default(uuid())
-  contract    Contract       @relation(fields: [contractId], references: [id])
-  contractId  String
-  threshold   AlertThreshold
-  triggeredAt DateTime       @default(now())
-  acknowledged Boolean       @default(false)
+  id           String         @id @default(uuid())
+  contract     Contract       @relation(fields: [contractId], references: [id])
+  contractId   String
+  threshold    AlertThreshold
+  triggeredAt  DateTime       @default(now())
+  acknowledged Boolean        @default(false)
 
   @@unique([contractId, threshold])
   @@map("contract_alerts")
@@ -345,19 +378,19 @@ enum InvoiceStatus {
 
 // Contas a pagar (faturas de locação)
 model Invoice {
-  id            String        @id @default(uuid())
-  contract      Contract      @relation(fields: [contractId], references: [id])
-  contractId    String
-  referenceMonth DateTime     // competência (mês/ano da fatura)
-  dueDate       DateTime
-  grossValue    Decimal       @db.Decimal(12, 2)
-  status        InvoiceStatus @default(PENDENTE)
+  id             String        @id @default(uuid())
+  contract       Contract      @relation(fields: [contractId], references: [id])
+  contractId     String
+  referenceMonth DateTime // competência (mês/ano da fatura)
+  dueDate        DateTime
+  grossValue     Decimal       @db.Decimal(12, 2)
+  status         InvoiceStatus @default(PENDENTE)
 
-  costAllocations InvoiceCostAllocation[]
+  costAllocations       InvoiceCostAllocation[]
   reconciliationMatches ReconciliationMatch[]
 
-  createdAt     DateTime      @default(now())
-  updatedAt     DateTime      @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   // Garante idempotência na importação automática de extratos de locação:
   // reimportar o mesmo extrato/mês para o mesmo contrato atualiza a fatura
@@ -370,13 +403,13 @@ model Invoice {
 
 // Rateio de custo por departamento/cliente (uma fatura pode ser dividida)
 model InvoiceCostAllocation {
-  id            String     @id @default(uuid())
-  invoice       Invoice    @relation(fields: [invoiceId], references: [id])
-  invoiceId     String
-  department    Department @relation(fields: [departmentId], references: [id])
-  departmentId  String
-  percentage    Decimal    @db.Decimal(5, 2)
-  value         Decimal    @db.Decimal(12, 2)
+  id           String     @id @default(uuid())
+  invoice      Invoice    @relation(fields: [invoiceId], references: [id])
+  invoiceId    String
+  department   Department @relation(fields: [departmentId], references: [id])
+  departmentId String
+  percentage   Decimal    @db.Decimal(5, 2)
+  value        Decimal    @db.Decimal(12, 2)
 
   @@map("invoice_cost_allocations")
 }
@@ -389,22 +422,22 @@ enum ReconciliationStatus {
 
 // Um upload de extrato bancário em PDF gera uma "sessão" de conciliação
 model Reconciliation {
-  id            String               @id @default(uuid())
-  referenceMonth DateTime
-  fileName      String
-  fileUrl       String               // caminho no storage (S3/blob)
-  status        ReconciliationStatus @default(PROCESSANDO)
-  totalTransactions Int              @default(0)
-  matchedCount  Int                  @default(0)
+  id                String               @id @default(uuid())
+  referenceMonth    DateTime
+  fileName          String
+  fileUrl           String // caminho no storage (S3/blob)
+  status            ReconciliationStatus @default(PROCESSANDO)
+  totalTransactions Int                  @default(0)
+  matchedCount      Int                  @default(0)
 
-  reconciledBy  User?                @relation("ReconciledBy", fields: [reconciledById], references: [id])
+  reconciledBy   User?   @relation("ReconciledBy", fields: [reconciledById], references: [id])
   reconciledById String?
 
-  transactions  BankTransaction[]
-  matches       ReconciliationMatch[]
+  transactions BankTransaction[]
+  matches      ReconciliationMatch[]
 
-  createdAt     DateTime             @default(now())
-  updatedAt     DateTime             @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@map("reconciliations")
 }
@@ -416,11 +449,11 @@ model BankTransaction {
   reconciliationId String
   transactionDate  DateTime
   description      String
-  rawText          String         // linha bruta extraída do PDF (auditoria)
+  rawText          String // linha bruta extraída do PDF (auditoria)
   amount           Decimal        @db.Decimal(12, 2) // saídas = negativo
   matched          Boolean        @default(false)
 
-  match            ReconciliationMatch?
+  match ReconciliationMatch?
 
   @@index([reconciliationId])
   @@map("bank_transactions")
@@ -440,20 +473,20 @@ enum MatchStatus {
 
 // O "match" entre uma transação bancária e uma fatura cadastrada
 model ReconciliationMatch {
-  id               String          @id @default(uuid())
-  reconciliation   Reconciliation  @relation(fields: [reconciliationId], references: [id])
-  reconciliationId String
-  bankTransaction  BankTransaction @relation(fields: [bankTransactionId], references: [id])
-  bankTransactionId String         @unique
-  invoice          Invoice         @relation(fields: [invoiceId], references: [id])
-  invoiceId        String
+  id                String          @id @default(uuid())
+  reconciliation    Reconciliation  @relation(fields: [reconciliationId], references: [id])
+  reconciliationId  String
+  bankTransaction   BankTransaction @relation(fields: [bankTransactionId], references: [id])
+  bankTransactionId String          @unique
+  invoice           Invoice         @relation(fields: [invoiceId], references: [id])
+  invoiceId         String
 
-  matchType        MatchType
-  matchStatus      MatchStatus     @default(PENDENTE_REVISAO)
-  confidenceScore  Decimal         @db.Decimal(5, 2) // 0-100, calculado pelo algoritmo
-  valueDelta       Decimal         @db.Decimal(12, 2) // diferença entre valor pago e valor da fatura
+  matchType       MatchType
+  matchStatus     MatchStatus @default(PENDENTE_REVISAO)
+  confidenceScore Decimal     @db.Decimal(5, 2) // 0-100, calculado pelo algoritmo
+  valueDelta      Decimal     @db.Decimal(12, 2) // diferença entre valor pago e valor da fatura
 
-  createdAt        DateTime        @default(now())
+  createdAt DateTime @default(now())
 
   @@map("reconciliation_matches")
 }
