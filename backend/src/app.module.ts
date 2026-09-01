@@ -11,12 +11,13 @@ import { ClientsModule } from './modules/clients/clients.module';
 import { LeaseImportModule } from './modules/lease-import/lease-import.module';
 import { EquipmentPricingModule } from './modules/equipment-pricing/equipment-pricing.module';
 import { DashboardModule } from './modules/dashboard/dashboard.module';
-// Próximo módulo de domínio a implementar: UsersModule (CRUD de usuários/RBAC).
+import { UsersModule } from './modules/users/users.module';
 
 @Module({
   imports: [
     PrismaModule,
     AuthModule,
+    UsersModule,
     DepartmentsModule,
     ClientsModule,
     EquipmentPricingModule,
