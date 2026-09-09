@@ -107,6 +107,24 @@ export class AssetsService {
 
   async update(id: string, dto: UpdateAssetDto) {
     const current = await this.findOne(id);
+
+    if (dto.assetTag && dto.assetTag !== current.assetTag) {
+      const duplicateTag = await this.prisma.asset.findUnique({ where: { assetTag: dto.assetTag } });
+      if (duplicateTag) throw new ConflictException('Já existe um ativo com essa tag de patrimônio');
+    }
+    if (dto.serialNumber && dto.serialNumber !== current.serialNumber) {
+      const duplicateSerial = await this.prisma.asset.findUnique({
+        where: { serialNumber: dto.serialNumber },
+      });
+      if (duplicateSerial) throw new ConflictException('Já existe um ativo com esse número de série');
+    }
+
+    const ownership = dto.ownership ?? current.ownership;
+    const contractId = dto.contractId !== undefined ? dto.contractId : current.contractId;
+    if (ownership === AssetOwnership.LOCADO && !contractId) {
+      throw new BadRequestException('Ativos locados precisam informar o contrato de origem');
+    }
+
     // Reclassifica o tipo se marca/modelo mudou — mantém a tabela de preços
     // de referência útil mesmo para ativos cadastrados/corrigidos manualmente.
     let priceTierId = current.priceTierId;

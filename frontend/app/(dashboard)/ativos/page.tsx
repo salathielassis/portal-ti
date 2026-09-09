@@ -12,6 +12,7 @@ import {
   Wrench,
   Undo2,
   UserCog,
+  Pencil,
 } from 'lucide-react';
 import { Header } from '@/components/layout/header';
 import { Button } from '@/components/ui/button';
@@ -199,6 +200,11 @@ export default function AtivosPage() {
   const [formError, setFormError] = React.useState<string | null>(null);
   const [submitting, setSubmitting] = React.useState(false);
 
+  const [editingAsset, setEditingAsset] = React.useState<Asset | null>(null);
+  const [editForm, setEditForm] = React.useState(emptyForm);
+  const [editError, setEditError] = React.useState<string | null>(null);
+  const [editSubmitting, setEditSubmitting] = React.useState(false);
+
   const [allocatingAsset, setAllocatingAsset] = React.useState<Asset | null>(null);
   const [allocateForm, setAllocateForm] = React.useState(emptyAllocateForm);
   const [allocateError, setAllocateError] = React.useState<string | null>(null);
@@ -294,6 +300,52 @@ export default function AtivosPage() {
       setFormError(err instanceof ApiError || err instanceof Error ? err.message : 'Não foi possível salvar o ativo.');
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  function openEdit(asset: Asset) {
+    setEditingAsset(asset);
+    setEditForm({
+      assetTag: asset.assetTag,
+      serialNumber: asset.serialNumber,
+      type: asset.type,
+      ownership: asset.ownership,
+      brand: asset.brand,
+      model: asset.model,
+      contractId: asset.contract?.id ?? '',
+    });
+    setEditError(null);
+  }
+
+  async function handleUpdateAsset(e: React.FormEvent) {
+    e.preventDefault();
+    if (!editingAsset) return;
+    setEditError(null);
+    setEditSubmitting(true);
+    try {
+      if (editForm.ownership === 'LOCADO' && !editForm.contractId) {
+        throw new Error('Selecione o contrato de origem para um ativo locado.');
+      }
+      await apiFetch(`/assets/${editingAsset.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          assetTag: editForm.assetTag,
+          serialNumber: editForm.serialNumber,
+          type: editForm.type,
+          ownership: editForm.ownership,
+          brand: editForm.brand,
+          model: editForm.model,
+          contractId: editForm.ownership === 'LOCADO' ? editForm.contractId : null,
+        }),
+      });
+      setEditingAsset(null);
+      await loadData();
+    } catch (err) {
+      setEditError(
+        err instanceof ApiError || err instanceof Error ? err.message : 'Não foi possível salvar o ativo.',
+      );
+    } finally {
+      setEditSubmitting(false);
     }
   }
 
@@ -644,6 +696,10 @@ export default function AtivosPage() {
                                 <History className="mr-2 h-3.5 w-3.5" /> Ver histórico
                               </DropdownMenuItem>
 
+                              <DropdownMenuItem onClick={() => openEdit(asset)}>
+                                <Pencil className="mr-2 h-3.5 w-3.5" /> Editar dados do ativo
+                              </DropdownMenuItem>
+
                               {asset.status !== 'EM_USO' && asset.status !== 'MANUTENCAO' && asset.status !== 'DEVOLVIDO' && (
                                 <DropdownMenuItem
                                   onClick={() => {
@@ -725,6 +781,108 @@ export default function AtivosPage() {
           </CardContent>
         </Card>
       </main>
+
+      {/* Editar dados do ativo */}
+      <Dialog open={!!editingAsset} onOpenChange={(v) => !v && setEditingAsset(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Editar ativo — {editingAsset?.assetTag}</DialogTitle>
+          </DialogHeader>
+          <form onSubmit={handleUpdateAsset} className="space-y-4">
+            {editError && <Alert variant="destructive">{editError}</Alert>}
+            <p className="text-sm text-muted-foreground">
+              Corrige os dados cadastrais do equipamento (tag, série, tipo, marca, modelo, propriedade). Não
+              altera alocação, status nem histórico.
+            </p>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="editAssetTag">Tag de patrimônio</Label>
+                <Input
+                  id="editAssetTag"
+                  required
+                  value={editForm.assetTag}
+                  onChange={(e) => setEditForm({ ...editForm, assetTag: e.target.value })}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="editSerialNumber">Número de série</Label>
+                <Input
+                  id="editSerialNumber"
+                  required
+                  value={editForm.serialNumber}
+                  onChange={(e) => setEditForm({ ...editForm, serialNumber: e.target.value })}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="editType">Tipo</Label>
+                <Select
+                  id="editType"
+                  value={editForm.type}
+                  onChange={(e) => setEditForm({ ...editForm, type: e.target.value as AssetType })}
+                >
+                  <option value="NOTEBOOK">Notebook</option>
+                  <option value="IMPRESSORA">Impressora</option>
+                  <option value="MONITOR">Monitor</option>
+                  <option value="PERIFERICO">Periférico</option>
+                  <option value="OUTRO">Outro</option>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="editOwnership">Propriedade</Label>
+                <Select
+                  id="editOwnership"
+                  value={editForm.ownership}
+                  onChange={(e) => setEditForm({ ...editForm, ownership: e.target.value as AssetOwnership })}
+                >
+                  <option value="PROPRIO">Próprio</option>
+                  <option value="LOCADO">Locado</option>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="editBrand">Marca</Label>
+                <Input
+                  id="editBrand"
+                  required
+                  value={editForm.brand}
+                  onChange={(e) => setEditForm({ ...editForm, brand: e.target.value })}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="editModel">Modelo</Label>
+                <Input
+                  id="editModel"
+                  required
+                  value={editForm.model}
+                  onChange={(e) => setEditForm({ ...editForm, model: e.target.value })}
+                />
+              </div>
+              {editForm.ownership === 'LOCADO' && (
+                <div className="col-span-2 space-y-1.5">
+                  <Label htmlFor="editContractId">Contrato de origem</Label>
+                  <Select
+                    id="editContractId"
+                    required
+                    value={editForm.contractId}
+                    onChange={(e) => setEditForm({ ...editForm, contractId: e.target.value })}
+                  >
+                    <option value="">Selecione...</option>
+                    {contracts.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.contractNumber}
+                      </option>
+                    ))}
+                  </Select>
+                </div>
+              )}
+            </div>
+            <DialogFooter>
+              <Button type="submit" disabled={editSubmitting}>
+                {editSubmitting ? 'Salvando...' : 'Salvar'}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
 
       {/* Alocar */}
       <Dialog open={!!allocatingAsset} onOpenChange={(v) => !v && setAllocatingAsset(null)}>
