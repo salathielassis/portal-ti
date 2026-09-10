@@ -16,3 +16,7 @@ frontend/out/
 *.log
 .DS_Store
 Thumbs.db
+
+# pacotes de backup (podem conter segredos / dados reais)
+backup/*
+!backup/.gitkeep

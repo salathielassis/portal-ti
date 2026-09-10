@@ -1,0 +1,25 @@
+# RECONSTRUÍDO a partir de `systemctl cat` parcial (VM 10.0.0.8, snapshot 2026-09-10).
+# Só as linhas abaixo foram confirmadas na sessão:
+#     User=ti
+#     WorkingDirectory=/home/ti/apps/portal-ti/frontend
+#     ExecStart=/usr/bin/npm run start
+# O restante ([Unit]/[Install]/Restart/Environment) é um modelo típico —
+# CONFIRME o arquivo real com:  systemctl cat portal-frontend.service
+
+[Unit]
+Description=Portal TI Frontend
+After=network.target portal-backend.service
+Wants=portal-backend.service
+
+[Service]
+Type=simple
+User=ti
+WorkingDirectory=/home/ti/apps/portal-ti/frontend
+ExecStart=/usr/bin/npm run start
+Environment=NODE_ENV=production
+Environment=PORT=3000
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

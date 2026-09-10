@@ -1,0 +1,23 @@
+Snapshot do ambiente de produção — 2026-09-10
+VM 10.0.0.8 (hostname: portal-ti), DNS portalti.doisa.com
+
+Node.js        v20.20.2   (/usr/bin/node)
+npm            10.8.2
+Next.js        14.2.35    (frontend, "next start" na porta 3000)
+NestJS         backend "node dist/main.js" na porta 3333, base /api
+PostgreSQL     16-alpine  (Docker, container itam-postgres, porta 5432)
+nginx          1.26.3     (site /etc/nginx/sites-enabled/portal-ti, só HTTP)
+
+Usuário do SO: ti
+Diretório app: /home/ti/apps/portal-ti
+Repo git:      github.com/salathielassis/portal-ti  (branch main)
+Commit no ar no dia do snapshot: d861bc1  (antes de recompilar/reiniciar)
+
+Serviços systemd:
+  portal-frontend.service   -> npm run start   (WD: .../frontend)
+  portal-backend.service    -> node dist/main.js (WD: .../backend)
+
+Banco: itam_db / itam_user  em localhost:5432 (volume Docker itam_pgdata)
+Migrações Prisma aplicadas: 6
+
+Portas ouvindo na VM: 80 (nginx), 3000 (next), 3333 (backend), 5432 (postgres)

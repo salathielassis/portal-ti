@@ -1,0 +1,42 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Deploy → VM (build + restart)",
+      "type": "shell",
+      "command": "ssh",
+      "args": [
+        "adm@10.0.0.8",
+        "bash /home/ti/apps/portal-ti/ops/deploy.sh"
+      ],
+      "problemMatcher": [],
+      "detail": "git pull + npm ci + build (front/back) + prisma migrate deploy + systemctl restart, na VM."
+    },
+    {
+      "label": "Backup ← VM (config, sem banco)",
+      "type": "shell",
+      "command": "ssh adm@10.0.0.8 'bash /home/ti/apps/portal-ti/ops/collect-vm-config.sh' ; scp adm@10.0.0.8:'~/portalti-vm-config-*.tar.gz' \"${workspaceFolder}/backup/\"",
+      "problemMatcher": [],
+      "detail": "Gera o pacote de config na VM e baixa para ./backup/."
+    },
+    {
+      "label": "Backup ← VM (config + dump do Postgres)",
+      "type": "shell",
+      "command": "ssh adm@10.0.0.8 'bash /home/ti/apps/portal-ti/ops/collect-vm-config.sh --with-db' ; scp adm@10.0.0.8:'~/portalti-vm-config-*.tar.gz' \"${workspaceFolder}/backup/\"",
+      "problemMatcher": [],
+      "detail": "Idem, incluindo dump completo do banco itam_db. Pacote contem dados reais."
+    },
+    {
+      "label": "Backup local (snapshot versionado → zip)",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-Command",
+        "$d=Get-Date -Format 'yyyy-MM-dd'; Compress-Archive -Force -Path 'ops/vm-snapshot/*','ops/deploy.sh','ops/collect-vm-config.sh','ops/restore.md','docs/PRODUCACAO_VM.md','docker-compose.yml' -DestinationPath \"backup/portalti-config-backup-$d.zip\"; Write-Host \"gerado: backup/portalti-config-backup-$d.zip\""
+      ],
+      "problemMatcher": [],
+      "detail": "Zipa o snapshot de config que esta no repo (sem segredos) em ./backup/."
+    }
+  ]
+}
