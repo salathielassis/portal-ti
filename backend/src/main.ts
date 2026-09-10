@@ -6,7 +6,7 @@ import { AppModule } from './app.module';
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
-  // CORS_ORIGIN pode ter uma ou várias origens separadas por vírgula (ex.: "https://portal-ti.netlify.app,https://portal.seudominio.com").
+  // CORS_ORIGIN pode ter uma ou várias origens separadas por vírgula (ex.: "https://portal.seudominio.com,https://192.168.x.x").
   // Sem a variável definida (ambiente local, por exemplo), libera qualquer origem.
   const corsOrigin = process.env.CORS_ORIGIN?.split(',').map((o) => o.trim()).filter(Boolean);
   app.enableCors({ origin: corsOrigin && corsOrigin.length > 0 ? corsOrigin : true, credentials: true });

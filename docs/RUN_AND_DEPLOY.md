@@ -64,85 +64,61 @@ git branch -M main
 git push -u origin main
 ```
 
-Recomendo dois repositórios separados (`portal-ti-frontend` e `portal-ti-backend`) ou um monorepo com esse `frontend/` e `backend/` — ambos funcionam com o que está aqui; monorepo é mais simples de manter sincronizado, repositórios separados facilitam configurar Netlify/cPanel apontando cada um para sua própria raiz de build.
+Recomendo dois repositórios separados (`portal-ti-frontend` e `portal-ti-backend`) ou um monorepo com esse `frontend/` e `backend/` — ambos funcionam com o que está aqui; monorepo é mais simples de manter sincronizado.
 
 ---
 
-## 3. Hospedagem — o que usar para cada parte
+## 3. Hospedagem — VM própria (Proxmox)
 
-Com o que você tem disponível (Firebase, Netlify, GitHub, cPanel), a combinação mais direta é:
+Frontend, backend e banco de dados rodam juntos numa VM própria, dentro de um cluster Proxmox — sem depender de serviços de terceiros. (Uma versão anterior deste guia recomendava Netlify + Render + Neon/cPanel; esses serviços não são mais usados neste projeto, e os recursos correspondentes já foram removidos dessas plataformas.)
 
-| Peça | Onde hospedar | Por quê |
-|---|---|---|
-| Frontend (Next.js) | **Netlify** | Suporte nativo a Next.js, deploy automático a cada push no GitHub, HTTPS grátis, zero configuração de servidor |
-| Backend (NestJS) | **cPanel** (se tiver "Setup Node.js App") | É o único dos quatro que roda um processo Node persistente — Netlify e Firebase Hosting são para conteúdo estático/funções, não para um servidor NestJS + Postgres always-on |
-| Banco de dados (PostgreSQL) | **cPanel** se tiver o addon PostgreSQL, senão um Postgres gerenciado gratuito externo (ex. Supabase ou Neon) | Muitos cPanel de hospedagem compartilhada só trazem MySQL por padrão |
-| GitHub | fonte da verdade + dispara os deploys | Netlify conecta direto; cPanel normalmente atualiza via `git pull` manual ou Git Deploy do próprio painel |
-| Firebase | opcional, como alternativa ao Netlify só para o frontend estático | Não é um bom encaixe para o backend NestJS (Cloud Functions exigiria reescrever o bootstrap do Nest como função serverless, e ainda faltaria um Postgres gerenciado) |
+A topologia exata da VM (gerenciador de processo do backend, forma de servir o frontend, proxy reverso, etc.) depende de como você configurou a VM, então aqui ficam só os pontos que valem para qualquer configuração self-hosted:
 
-> **Nota:** no deploy real deste projeto, o backend acabou hospedado no **Render** (não no cPanel) e o banco no **Neon** — ambos free tier — porque o cPanel disponível não tinha "Setup Node.js App". As instruções de cPanel abaixo continuam válidas como alternativa caso você troque de hospedagem futuramente.
+### 3.1 Banco de dados
 
-### 3.1 Frontend na Netlify
+Postgres roda na própria VM (ou em outra máquina acessível a partir dela). Ajuste a `DATABASE_URL` do backend em produção apontando para esse Postgres real — algo como `postgresql://usuario:senha@localhost:5432/itam_db` se o banco estiver na mesma VM do backend, ou usando o IP interno da VM do banco caso estejam separadas.
 
-1. Login na Netlify → **Add new site → Import an existing project** → conecte sua conta do GitHub → escolha o repositório do frontend.
-2. Configurações de build:
-   - **Base directory**: `frontend` (se for monorepo) ou vazio (se for repositório dedicado)
-   - **Build command**: `npm run build`
-   - **Publish directory**: em monorepo, defina explicitamente como `frontend/.next` (deixar em branco causa erro quando "Base directory" já está definido) — e confira em **Project configuration → Build & deploy** se o **Runtime** está marcado como **Next.js**; se estiver "Not set", selecione manualmente, senão o site fica com 404 em todas as rotas.
-3. Em **Environment variables**, adicione `NEXT_PUBLIC_API_URL` apontando para onde o backend vai ficar, por exemplo `https://api.seudominio.com` (ou a URL do Render, se for esse o caso).
-4. Deploy. A cada `git push` na branch principal, a Netlify rebuilda sozinha.
-5. Domínio: em **Domain settings**, você pode usar o subdomínio grátis da Netlify (`seu-projeto.netlify.app`) ou apontar um subdomínio seu (ex. `portal.seudominio.com`) criando um registro CNAME no seu DNS apontando para a Netlify — não precisa passar pelo cPanel para isso, a menos que seu DNS também seja gerenciado lá.
+### 3.2 Backend (NestJS)
 
-### 3.2 Backend no cPanel
+Na VM:
+```bash
+cd backend
+npm install
+npm run build
+npx prisma generate
+npx prisma migrate deploy
+```
+Depois, mantenha o processo (`node dist/main.js` ou `npm run start:prod`) rodando de forma persistente com o gerenciador de processo que você escolher na VM (systemd, pm2, Docker, etc.) — o importante é que ele reinicie sozinho se cair e sobreviva a reboots da VM. Configure as variáveis de ambiente (`DATABASE_URL`, `JWT_SECRET`, `PORT`, `CORS_ORIGIN`, `STORAGE_BASE_URL`) no mesmo lugar onde esse processo é definido (arquivo `.env` na VM, unit do systemd, etc.) — nunca commitadas no repositório.
 
-Primeiro, confirme que seu plano tem o recurso: entre no cPanel e procure por um ícone chamado **"Setup Node.js App"** (às vezes "Node.js Selector"). Se não existir, seu cPanel é hospedagem compartilhada tradicional sem suporte a processos Node persistentes, e aí o backend precisa de outro host (nesse caso me avise que te indico opções fora da sua lista atual).
+### 3.3 Frontend (Next.js)
 
-Se existir:
-
-1. **Criar o subdomínio primeiro**: cPanel → **Subdomains** → crie, por exemplo, `api` (vira `api.seudominio.com`), apontando para uma pasta nova tipo `api.seudominio.com`.
-2. **Setup Node.js App** → **Create Application**:
-   - Node.js version: a mais recente disponível (18 ou 20+)
-   - Application mode: Production
-   - Application root: a mesma pasta do subdomínio criado
-   - Application URL: selecione o subdomínio `api.seudominio.com`
-   - Application startup file: `dist/main.js`
-3. Envie os arquivos do backend para essa pasta — pelo Git (se o cPanel tiver **Git Version Control**, aponte para o seu repositório) ou via upload/FTP do conteúdo da pasta `backend/`.
-4. No painel do Node.js App, clique em **"Run NPM Install"** (ele usa o `package.json` para instalar as dependências no ambiente do cPanel).
-5. Rode o build: o painel geralmente expõe um terminal ("Enter to the virtual environment" no topo da página do app) — nele:
-   ```bash
-   npm run build
-   npx prisma generate
-   npx prisma migrate deploy
-   ```
-6. Configure as **variáveis de ambiente** direto na tela do Node.js App (mesmo conteúdo do seu `.env`: `DATABASE_URL`, `JWT_SECRET`, `PORT` — o cPanel geralmente define a porta internamente, então confira o valor que ele exige).
-7. Clique em **Restart**. A aplicação passa a responder em `https://api.seudominio.com`.
-
-### 3.3 Banco de dados
-
-Verifique em cPanel → **PostgreSQL Databases** se esse addon existe no seu plano:
-- **Se existir**: crie o banco e o usuário por lá, pegue host/porta/usuário/senha e monte a `DATABASE_URL` (formato `postgresql://usuario:senha@localhost:5432/nome_do_banco`) — como backend e banco ficam no mesmo servidor, a latência é mínima.
-- **Se só existir MySQL**: você tem duas saídas. A mais simples é usar um Postgres gerenciado gratuito fora do cPanel (Supabase ou Neon têm tier free generoso, criam a `DATABASE_URL` pronta em minutos, e o backend se conecta remotamente sem mudar nada no código). A outra é trocar `provider = "postgresql"` por `provider = "mysql"` em `backend/prisma/schema.prisma` e usar o MySQL do próprio cPanel — funciona, mas dois ou três tipos de coluna do schema (principalmente `Json` e alguns `Decimal`) merecem uma conferência depois da troca, então só vale a pena se manter tudo dentro do cPanel for importante para você.
+```bash
+cd frontend
+npm install
+npm run build
+```
+E sirva o resultado (`npm run start`, atrás de um proxy reverso tipo Nginx, ou a forma que você tiver configurado na VM), com `NEXT_PUBLIC_API_URL` apontando para o endereço real do backend na VM (IP interno, domínio, etc.) no momento do build.
 
 ### 3.4 Conectando as pontas
 
-Depois de tudo no ar: o frontend lê `NEXT_PUBLIC_API_URL=https://<sua-api>`, e o backend restringe o CORS apenas ao domínio real do frontend através da variável de ambiente `CORS_ORIGIN` (ex.: `CORS_ORIGIN=https://portal-ti.netlify.app`, podendo listar mais de uma origem separada por vírgula) — configurada direto no painel do Render (ou do cPanel, se for o caso). Sem essa variável definida, o backend libera qualquer origem (útil só em ambiente local); em produção ela deve sempre apontar para o domínio exato do frontend.
+O frontend lê `NEXT_PUBLIC_API_URL=<endereço do backend>`, e o backend restringe o CORS apenas à origem real do frontend através da variável `CORS_ORIGIN` (pode listar mais de uma origem separada por vírgula). Sem essa variável definida, o backend libera qualquer origem (útil só em ambiente local); em produção ela deve sempre apontar para o domínio/IP exato de onde o frontend é servido.
 
 ---
 
 ## 4. Como editar o sistema depois que já está no ar
 
-A hospedagem atual (Netlify para o frontend, Render para o backend) está configurada com **deploy contínuo via GitHub**: os dois serviços ficam "escutando" a branch `main` do repositório. Isso significa que o processo de editar algo é sempre o mesmo, sem precisar mexer manualmente no painel do Netlify ou do Render de novo:
+A hospedagem atual (VM própria) não tem deploy automático via GitHub — isso era específico do Netlify/Render, que não são mais usados. O processo de editar algo é:
 
 1. Edite o arquivo (localmente, no VS Code).
 2. `git add <arquivo>` e `git commit -m "descrição da mudança"`.
 3. `git push origin main`.
-4. Pronto — o Render detecta o push e refaz o build do backend automaticamente (acompanhe em **Render → seu serviço → Events/Logs**), e a Netlify faz o mesmo para o frontend (acompanhe em **Netlify → seu site → Deploys**). Cada deploy leva de 1 a 3 minutos.
+4. Na VM, atualize o código (`git pull` ou o mecanismo que você tiver configurado lá) e refaça o build/restart do backend e/ou do frontend (seções 3.2 e 3.3 acima), conforme o que mudou.
 
-Não é preciso recriar o serviço nem reconfigurar variáveis de ambiente a cada mudança — isso só é necessário se a própria variável mudar de valor (nesse caso, edite direto em **Render → Environment** ou **Netlify → Project configuration → Environment variables**, o que dispara um novo deploy sozinho).
+Se uma variável de ambiente mudar de valor, edite direto no arquivo/local onde ela está configurada na VM e reinicie o processo correspondente para o novo valor ter efeito.
 
 ### Quando o `schema.prisma` muda (nova coluna, novo status, nova tabela)
 
-O passo a passo acima (editar → commit → push) é suficiente para código, mas **não é suficiente sozinho quando o `backend/prisma/schema.prisma` muda** — o Render só builda e roda o servidor (`npm run build` + `node dist/main`), ele não aplica migração nenhuma no banco de produção sozinho. Sem esse passo extra, o backend sobe com um código que espera uma coluna/valor de enum que ainda não existe no Neon, e todo request que tocar nisso quebra. Sempre que uma mudança alterar o `schema.prisma` (como a que adicionou o status `DEVOLVIDO` aos ativos):
+O passo a passo acima (editar → commit → push) é suficiente para código, mas **não é suficiente sozinho quando o `backend/prisma/schema.prisma` muda** — rebuildar e reiniciar o backend na VM não aplica migração nenhuma no banco sozinho. Sem esse passo extra, o backend sobe com um código que espera uma coluna/valor de enum que ainda não existe no banco de produção, e todo request que tocar nisso quebra. Sempre que uma mudança alterar o `schema.prisma` (como a que adicionou o status `DEVOLVIDO` aos ativos):
 
 1. Rode localmente primeiro, contra o seu banco de desenvolvimento (gera o arquivo de migração, que já vai junto no commit):
    ```powershell
@@ -150,22 +126,22 @@ O passo a passo acima (editar → commit → push) é suficiente para código, m
    npx prisma migrate dev --name nome-da-mudanca
    ```
 2. Confirme que o build local ainda passa (`npm run build`) e prossiga com o commit/push normal (seção acima) — o arquivo novo em `backend/prisma/migrations/` precisa estar no commit.
-3. Depois que o Render terminar de subir a nova versão do backend, aplique a MESMA migração no banco de produção (Neon), rodando localmente com a `DATABASE_URL` de produção (mesmo truque do `set-password`):
-   ```powershell
+3. Na VM, depois de atualizar o código, aplique a MESMA migração no banco de produção antes (ou logo depois) de reiniciar o backend:
+   ```bash
    cd backend
-   $env:DATABASE_URL="postgresql://...string-de-conexao-do-neon...";  npx prisma migrate deploy
+   npx prisma migrate deploy
    ```
-   `migrate deploy` (diferente de `migrate dev`) só aplica migrações já existentes, sem pedir confirmação nem tentar gerar uma nova — é a forma seguro de rodar contra produção.
+   `migrate deploy` (diferente de `migrate dev`) só aplica migrações já existentes, sem pedir confirmação nem tentar gerar uma nova — é a forma segura de rodar contra produção. Como o banco agora está na própria VM, isso pode ser rodado direto nela, sem precisar apontar `DATABASE_URL` para um host remoto.
 
 Se pular o passo 3, o sintoma normalmente é um erro genérico (`Internal server error` ou um erro do Prisma reclamando de uma coluna/valor desconhecido) assim que alguma tela tentar usar o campo novo — mesmo com o deploy do código tendo "dado certo".
 
 ### Trocar a senha de um usuário em produção
 
-Se uma senha vazar ou precisar ser trocada (por exemplo, a senha padrão do seed, que não deve continuar em uso depois que o sistema vai ao ar), rode localmente, apontando para o banco de produção (Neon), sem alterar seu `.env` local:
+Se uma senha vazar ou precisar ser trocada (por exemplo, a senha padrão do seed, que não deve continuar em uso depois que o sistema vai ao ar), rode direto na VM, apontando para o banco de produção:
 
-```powershell
+```bash
 cd backend
-$env:DATABASE_URL="postgresql://...string-de-conexao-do-neon...";  npm run set-password -- admin@portalti.com "NovaSenhaForte123"
+npm run set-password -- admin@portalti.com "NovaSenhaForte123"
 ```
 
 O comando busca o usuário pelo e-mail e grava o hash da nova senha diretamente no banco — não precisa de deploy nem de reiniciar nada.
@@ -174,9 +150,9 @@ O comando busca o usuário pelo e-mail e grava o hash da nova senha diretamente 
 
 O `prisma:seed` cria alguns registros só para você ter o que testar (fornecedor "TechLease Locações Ltda", contrato "CTR-2026-0001", o ativo "NB-00001" e a fatura de exemplo). Quando o sistema for para uso real, apague esses registros de exemplo com:
 
-```powershell
+```bash
 cd backend
-$env:DATABASE_URL="postgresql://...string-de-conexao-do-neon...";  npm run remove-seed-demo-data
+npm run remove-seed-demo-data
 ```
 
 Isso preserva o que já é real: o usuário admin, o departamento, o cliente "DOISA" (matriz "DOISA NATAL - SEDE") e os 7 tipos de equipamento da tabela de preços de referência. É seguro rodar mais de uma vez.
@@ -185,4 +161,4 @@ Isso preserva o que já é real: o usuário admin, o departamento, o cliente "DO
 
 ## 5. Checklist rápido antes de ir ao ar
 
-Trocar `JWT_SECRET` do `.env.example` por um valor forte e único em produção é o item que mais gente esquece — sem isso, qualquer token JWT antigo ou de exemplo continua "válido" teoricamente. Também vale restringir o CORS ao domínio real do frontend (item 3.4, já feito neste deploy via `CORS_ORIGIN`), rodar `prisma migrate deploy` (não `migrate dev`) em produção, trocar a senha padrão criada pelo seed (veja o comando `set-password` acima) e conferir se o upload de PDF da conciliação tem um destino de armazenamento real configurado em `StorageService` — hoje ele só monta uma URL fake, então plugar S3/Blob (ou mesmo salvar em disco no próprio cPanel, para começar) é necessário antes do módulo de conciliação funcionar de ponta a ponta em produção.
+Trocar `JWT_SECRET` do `.env.example` por um valor forte e único em produção é o item que mais gente esquece — sem isso, qualquer token JWT antigo ou de exemplo continua "válido" teoricamente. Também vale restringir o CORS ao domínio/IP real do frontend (item 3.4, via `CORS_ORIGIN`), rodar `prisma migrate deploy` (não `migrate dev`) em produção, trocar a senha padrão criada pelo seed (veja o comando `set-password` acima) e conferir se o upload de PDF da conciliação tem um destino de armazenamento real configurado em `StorageService` — hoje ele só monta uma URL fake, então plugar um destino real (S3/Blob, ou mesmo um caminho em disco na própria VM, para começar) é necessário antes do módulo de conciliação funcionar de ponta a ponta em produção.

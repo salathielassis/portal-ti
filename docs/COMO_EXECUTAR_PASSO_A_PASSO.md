@@ -228,4 +228,4 @@ Não precisa repetir `npm install`, `prisma generate`, `migrate` nem `seed` — 
 
 ---
 
-Quando isso tudo estiver rodando local e você já tiver visto o dashboard no navegador, me avisa que a gente parte para o próximo passo: publicar de verdade (GitHub → Netlify → cPanel), que já expliquei no `RUN_AND_DEPLOY.md` — mas vamos fazer aquilo com calma também, um passo de cada vez, do mesmo jeito que este aqui.
+Quando isso tudo estiver rodando local e você já tiver visto o dashboard no navegador, me avisa que a gente parte para o próximo passo: publicar de verdade na VM (self-hosted, via Proxmox), que já expliquei no `RUN_AND_DEPLOY.md` — mas vamos fazer aquilo com calma também, um passo de cada vez, do mesmo jeito que este aqui.
