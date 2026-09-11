@@ -10,7 +10,8 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:seed": "ts-node prisma/seed.ts",
     "set-password": "ts-node scripts/set-password.ts",
-    "remove-seed-demo-data": "ts-node scripts/remove-seed-demo-data.ts"
+    "remove-seed-demo-data": "ts-node scripts/remove-seed-demo-data.ts",
+    "import-doisa-notebooks": "ts-node scripts/import-doisa-notebooks.ts"
   },
   "prisma": {
     "seed": "ts-node prisma/seed.ts"

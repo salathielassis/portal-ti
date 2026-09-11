@@ -71,6 +71,12 @@ interface PriceTier {
   label: string;
 }
 
+interface AssetSpecs {
+  cpu?: string;
+  ram?: string;
+  storage?: string;
+}
+
 interface Asset {
   id: string;
   assetTag: string;
@@ -80,6 +86,7 @@ interface Asset {
   status: AssetStatus;
   brand: string;
   model: string;
+  specs: AssetSpecs | null;
   contract: Contract | null;
   priceTier: PriceTier | null;
   allocations: { assignedToName: string; site: Site | null; obra: { id: string; name: string } | null }[];
@@ -119,6 +126,9 @@ const emptyForm = {
   ownership: 'PROPRIO' as AssetOwnership,
   brand: '',
   model: '',
+  cpu: '',
+  ram: '',
+  storage: '',
   contractId: '',
 };
 
@@ -171,6 +181,20 @@ function formatDate(value: string | null) {
 
 function formatDateTime(value: string) {
   return new Date(value).toLocaleString('pt-BR');
+}
+
+function specsSummary(specs: AssetSpecs | null): string {
+  if (!specs) return '';
+  return [specs.cpu, specs.ram, specs.storage].map((s) => s?.trim()).filter(Boolean).join(' · ');
+}
+
+/** Monta o objeto `specs` para envio — só inclui as chaves preenchidas. */
+function buildSpecs(form: { cpu: string; ram: string; storage: string }): AssetSpecs | undefined {
+  const specs: AssetSpecs = {};
+  if (form.cpu.trim()) specs.cpu = form.cpu.trim();
+  if (form.ram.trim()) specs.ram = form.ram.trim();
+  if (form.storage.trim()) specs.storage = form.storage.trim();
+  return Object.keys(specs).length ? specs : undefined;
 }
 
 function locationLabel(alloc: {
@@ -290,6 +314,7 @@ export default function AtivosPage() {
           ownership: form.ownership,
           brand: form.brand,
           model: form.model,
+          specs: buildSpecs(form),
           contractId: form.ownership === 'LOCADO' ? form.contractId : undefined,
         }),
       });
@@ -312,6 +337,9 @@ export default function AtivosPage() {
       ownership: asset.ownership,
       brand: asset.brand,
       model: asset.model,
+      cpu: asset.specs?.cpu ?? '',
+      ram: asset.specs?.ram ?? '',
+      storage: asset.specs?.storage ?? '',
       contractId: asset.contract?.id ?? '',
     });
     setEditError(null);
@@ -335,6 +363,7 @@ export default function AtivosPage() {
           ownership: editForm.ownership,
           brand: editForm.brand,
           model: editForm.model,
+          specs: buildSpecs(editForm) ?? {},
           contractId: editForm.ownership === 'LOCADO' ? editForm.contractId : null,
         }),
       });
@@ -556,6 +585,33 @@ export default function AtivosPage() {
                       onChange={(e) => setForm({ ...form, model: e.target.value })}
                     />
                   </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="cpu">Processador</Label>
+                    <Input
+                      id="cpu"
+                      placeholder="Core i5-1235U"
+                      value={form.cpu}
+                      onChange={(e) => setForm({ ...form, cpu: e.target.value })}
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="ram">Memória RAM</Label>
+                    <Input
+                      id="ram"
+                      placeholder="16GB"
+                      value={form.ram}
+                      onChange={(e) => setForm({ ...form, ram: e.target.value })}
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="storage">Armazenamento</Label>
+                    <Input
+                      id="storage"
+                      placeholder="SSD 512GB"
+                      value={form.storage}
+                      onChange={(e) => setForm({ ...form, storage: e.target.value })}
+                    />
+                  </div>
                   {form.ownership === 'LOCADO' && (
                     <div className="col-span-2 space-y-1.5">
                       <Label htmlFor="contractId">Contrato de origem</Label>
@@ -669,6 +725,11 @@ export default function AtivosPage() {
                         <TableCell className="font-medium">{asset.assetTag}</TableCell>
                         <TableCell>
                           {asset.brand} {asset.model}
+                          {specsSummary(asset.specs) && (
+                            <span className="block text-xs text-muted-foreground">
+                              {specsSummary(asset.specs)}
+                            </span>
+                          )}
                         </TableCell>
                         <TableCell className="text-muted-foreground">
                           {asset.priceTier ? asset.priceTier.label : '—'}
@@ -854,6 +915,33 @@ export default function AtivosPage() {
                   required
                   value={editForm.model}
                   onChange={(e) => setEditForm({ ...editForm, model: e.target.value })}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="editCpu">Processador</Label>
+                <Input
+                  id="editCpu"
+                  placeholder="Core i5-1235U"
+                  value={editForm.cpu}
+                  onChange={(e) => setEditForm({ ...editForm, cpu: e.target.value })}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="editRam">Memória RAM</Label>
+                <Input
+                  id="editRam"
+                  placeholder="16GB"
+                  value={editForm.ram}
+                  onChange={(e) => setEditForm({ ...editForm, ram: e.target.value })}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="editStorage">Armazenamento</Label>
+                <Input
+                  id="editStorage"
+                  placeholder="SSD 512GB"
+                  value={editForm.storage}
+                  onChange={(e) => setEditForm({ ...editForm, storage: e.target.value })}
                 />
               </div>
               {editForm.ownership === 'LOCADO' && (
@@ -1143,6 +1231,24 @@ export default function AtivosPage() {
                   <p className="text-muted-foreground">Status atual</p>
                   <Badge variant={STATUS_VARIANT[historyAsset.status]}>{STATUS_LABEL[historyAsset.status]}</Badge>
                 </div>
+                {historyAsset.specs?.cpu && (
+                  <div>
+                    <p className="text-muted-foreground">Processador</p>
+                    <p className="font-medium">{historyAsset.specs.cpu}</p>
+                  </div>
+                )}
+                {historyAsset.specs?.ram && (
+                  <div>
+                    <p className="text-muted-foreground">Memória RAM</p>
+                    <p className="font-medium">{historyAsset.specs.ram}</p>
+                  </div>
+                )}
+                {historyAsset.specs?.storage && (
+                  <div>
+                    <p className="text-muted-foreground">Armazenamento</p>
+                    <p className="font-medium">{historyAsset.specs.storage}</p>
+                  </div>
+                )}
               </div>
 
               <div>
