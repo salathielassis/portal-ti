@@ -13,6 +13,7 @@ import {
   UpdateAssignedToDto,
   SendToMaintenanceDto,
   ReturnFromMaintenanceDto,
+  DiscardAssetDto,
 } from './dto/allocate-asset.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
@@ -171,5 +172,12 @@ export class AssetsController {
     @CurrentUser() user: { id: string },
   ) {
     return this.assetsService.returnFromMaintenance(id, dto, user.id);
+  }
+
+  @Post(':id/discard')
+  @Roles(UserRole.ADMIN, UserRole.SUPORTE)
+  @ApiOperation({ summary: 'Dá baixa definitiva no ativo (defeito sem conserto viável, perda, etc.)' })
+  discard(@Param('id') id: string, @Body() dto: DiscardAssetDto, @CurrentUser() user: { id: string }) {
+    return this.assetsService.discard(id, dto, user.id);
   }
 }

@@ -13,6 +13,7 @@ import {
   Undo2,
   UserCog,
   Pencil,
+  Trash2,
 } from 'lucide-react';
 import { Header } from '@/components/layout/header';
 import { Button } from '@/components/ui/button';
@@ -137,6 +138,7 @@ const today = () => new Date().toISOString().slice(0, 10);
 const emptyAllocateForm = { assignedToName: '', obraId: '', deliveryDate: today() };
 const emptyTransferForm = { assignedToName: '', obraId: '', transferDate: today(), notes: '' };
 const emptyMaintenanceForm = { date: today(), notes: '' };
+const emptyDiscardForm = { date: today(), reason: '' };
 const emptyReturnForm = { returnDate: today(), notes: '' };
 
 const TYPE_LABEL: Record<AssetType, string> = {
@@ -248,6 +250,10 @@ export default function AtivosPage() {
   const [maintenanceAsset, setMaintenanceAsset] = React.useState<{ asset: Asset; mode: 'start' | 'end' } | null>(null);
   const [maintenanceForm, setMaintenanceForm] = React.useState(emptyMaintenanceForm);
   const [maintenanceError, setMaintenanceError] = React.useState<string | null>(null);
+
+  const [discardingAsset, setDiscardingAsset] = React.useState<Asset | null>(null);
+  const [discardForm, setDiscardForm] = React.useState(emptyDiscardForm);
+  const [discardError, setDiscardError] = React.useState<string | null>(null);
 
   const [historyAsset, setHistoryAsset] = React.useState<AssetDetail | null>(null);
   const [historyLoading, setHistoryLoading] = React.useState(false);
@@ -479,6 +485,23 @@ export default function AtivosPage() {
           ? err.message
           : `Não foi possível ${maintenanceAsset.mode === 'start' ? 'enviar para' : 'retornar da'} manutenção.`,
       );
+    }
+  }
+
+  async function handleDiscardSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!discardingAsset) return;
+    setDiscardError(null);
+    try {
+      await apiFetch(`/assets/${discardingAsset.id}/discard`, {
+        method: 'POST',
+        body: JSON.stringify({ date: discardForm.date, reason: discardForm.reason }),
+      });
+      setDiscardingAsset(null);
+      setDiscardForm(emptyDiscardForm);
+      await loadData();
+    } catch (err) {
+      setDiscardError(err instanceof ApiError ? err.message : 'Não foi possível descartar o ativo.');
     }
   }
 
@@ -828,6 +851,19 @@ export default function AtivosPage() {
                                   }}
                                 >
                                   <Undo2 className="mr-2 h-3.5 w-3.5" /> Retornar da manutenção
+                                </DropdownMenuItem>
+                              )}
+
+                              {asset.status !== 'DESCARTADO' && asset.status !== 'DEVOLVIDO' && (
+                                <DropdownMenuItem
+                                  className="text-destructive focus:text-destructive"
+                                  onClick={() => {
+                                    setDiscardingAsset(asset);
+                                    setDiscardForm(emptyDiscardForm);
+                                    setDiscardError(null);
+                                  }}
+                                >
+                                  <Trash2 className="mr-2 h-3.5 w-3.5" /> Descartar
                                 </DropdownMenuItem>
                               )}
                             </DropdownMenuContent>
@@ -1195,6 +1231,48 @@ export default function AtivosPage() {
             </div>
             <DialogFooter>
               <Button type="submit">Confirmar</Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Descartar (baixa definitiva) */}
+      <Dialog open={!!discardingAsset} onOpenChange={(v) => !v && setDiscardingAsset(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Descartar {discardingAsset?.assetTag}</DialogTitle>
+          </DialogHeader>
+          <form onSubmit={handleDiscardSubmit} className="space-y-4">
+            {discardError && <Alert variant="destructive">{discardError}</Alert>}
+            <p className="text-sm text-muted-foreground">
+              Baixa definitiva — diferente de manutenção, o ativo não volta pro estoque depois. Encerra a
+              alocação ativa, se houver, e fica registrado como Descartado (consultável no histórico).
+            </p>
+            <div className="space-y-1.5">
+              <Label htmlFor="discardDate">Data</Label>
+              <Input
+                id="discardDate"
+                type="date"
+                required
+                value={discardForm.date}
+                onChange={(e) => setDiscardForm({ ...discardForm, date: e.target.value })}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="discardReason">Motivo do descarte</Label>
+              <Textarea
+                id="discardReason"
+                rows={2}
+                required
+                placeholder="Ex.: defeito na placa-mãe, sem conserto viável pelo valor"
+                value={discardForm.reason}
+                onChange={(e) => setDiscardForm({ ...discardForm, reason: e.target.value })}
+              />
+            </div>
+            <DialogFooter>
+              <Button type="submit" variant="destructive">
+                Confirmar descarte
+              </Button>
             </DialogFooter>
           </form>
         </DialogContent>

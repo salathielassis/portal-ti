@@ -11,6 +11,7 @@ import {
   UpdateAssignedToDto,
   SendToMaintenanceDto,
   ReturnFromMaintenanceDto,
+  DiscardAssetDto,
 } from './dto/allocate-asset.dto';
 
 interface FindAllFilters {
@@ -403,6 +404,46 @@ export class AssetsService {
     });
 
     return this.prisma.asset.update({ where: { id: assetId }, data: { status: AssetStatus.ESTOQUE } });
+  }
+
+  /**
+   * Baixa definitiva do ativo — defeito sem conserto viável pelo valor,
+   * perda, etc. Encerra a alocação ativa (se houver), igual às outras
+   * saídas, mas o destino é DESCARTADO: diferente de manutenção, não volta
+   * pro estoque depois. O cadastro e o histórico continuam consultáveis
+   * (mesmo raciocínio de DEVOLVIDO), só não conta mais como disponível.
+   */
+  async discard(assetId: string, dto: DiscardAssetDto, userId: string) {
+    const asset = await this.findOne(assetId);
+    if (asset.status === AssetStatus.DESCARTADO) {
+      throw new BadRequestException('Este ativo já está descartado');
+    }
+
+    const activeAllocation = await this.prisma.assetAllocation.findFirst({
+      where: { assetId, isActive: true },
+    });
+
+    // Sequência simples (sem `$transaction` interativa) — ver nota em `allocate()`.
+    if (activeAllocation) {
+      await this.prisma.assetAllocation.update({
+        where: { id: activeAllocation.id },
+        data: { isActive: false, returnDate: new Date(dto.date) },
+      });
+    }
+
+    await this.prisma.assetMovement.create({
+      data: {
+        assetId,
+        type: MovementType.DESCARTE,
+        fromStatus: asset.status,
+        toStatus: AssetStatus.DESCARTADO,
+        loggedById: userId,
+        description: dto.reason,
+        occurredAt: new Date(dto.date),
+      },
+    });
+
+    return this.prisma.asset.update({ where: { id: assetId }, data: { status: AssetStatus.DESCARTADO } });
   }
 
   /**

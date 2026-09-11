@@ -127,3 +127,18 @@ export class ReturnFromMaintenanceDto {
   @IsString()
   notes?: string;
 }
+
+/**
+ * Baixa definitiva do ativo (defeito sem conserto viável, perda, etc.).
+ * Diferente de manutenção: não volta pro estoque depois — fica só no
+ * histórico. Encerra a alocação ativa, se houver, igual às outras saídas.
+ */
+export class DiscardAssetDto {
+  @ApiProperty({ example: '2026-09-11' })
+  @IsDateString()
+  date: string;
+
+  @ApiProperty({ description: 'Motivo do descarte (ex.: defeito sem conserto viável pelo valor)' })
+  @IsString()
+  reason: string;
+}
