@@ -235,6 +235,22 @@ export class AssetsController {
     res.end(buffer);
   }
 
+  @Get(':id/termo-devolucao')
+  @ApiOperation({
+    summary:
+      'Gera o termo de devolução (PDF) da alocação ativa do ativo — pensado para imprimir/assinar antes de registrar a devolução em si',
+  })
+  async downloadTermoDevolucao(@Param('id') id: string, @Res() res: Response) {
+    const { asset, allocation } = await this.assetsService.findActiveAllocationForTermo(id);
+    const buffer = await this.assetsExportService.generateTermoDevolucao(asset, allocation);
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `attachment; filename="termo-devolucao-${asset.assetTag}.pdf"`,
+      'Content-Length': String(buffer.length),
+    });
+    res.end(buffer);
+  }
+
   @Delete(':id/attachments/:attachmentId')
   @Roles(UserRole.ADMIN, UserRole.SUPORTE)
   @ApiOperation({ summary: 'Remove um anexo do ativo' })

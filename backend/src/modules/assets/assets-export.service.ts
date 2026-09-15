@@ -2,6 +2,8 @@ import { Injectable } from '@nestjs/common';
 import { AssetOwnership, AssetStatus, AssetType, Prisma } from '@prisma/client';
 import ExcelJS from 'exceljs';
 import PDFDocument from 'pdfkit';
+import { promises as fs } from 'fs';
+import * as path from 'path';
 import { PrismaService } from '../../prisma/prisma.service';
 
 export type ExportFormat = 'xlsx' | 'pdf';
@@ -98,15 +100,45 @@ type AllocationForTermo = Prisma.AssetAllocationGetPayload<{
   include: { site: true; obra: true; department: true };
 }>;
 
-// TODO: substituir por texto do termo de responsabilidade que a empresa já usa
-// (o usuário informou que tem um modelo pronto — assim que enviar, trocar aqui).
-const TERMO_CLAUSES = [
-  'O(a) colaborador(a) acima identificado(a) declara ter recebido o equipamento descrito neste termo, em perfeito estado de uso e funcionamento, ficando responsável pela sua guarda, conservação e correta utilização.',
-  'O equipamento é de propriedade da empresa (ou de terceiro locador, quando aplicável) e deve ser utilizado exclusivamente para fins profissionais relacionados às atividades do colaborador.',
-  'Em caso de dano, perda, furto ou extravio decorrente de mau uso ou negligência, o colaborador poderá responder pelo ressarcimento do equipamento, nos termos da política interna da empresa.',
-  'O colaborador compromete-se a devolver o equipamento, em condições compatíveis com o uso normal, sempre que solicitado pela empresa ou no ato de desligamento, transferência de função ou substituição do equipamento.',
-  'Qualquer defeito, mau funcionamento ou necessidade de manutenção deve ser comunicado imediatamente ao setor de TI.',
+// Conteúdo replicado dos modelos oficiais da empresa (.docx fornecidos pelo
+// usuário: "TERMO DE RESPONSABILIDADE - EQUIPAMENTOS DE TI" e "TERMO DE
+// DEVOLUCAO - EQUIPAMENTOS DE TI"). A logo (backend/assets/logo-dois-a.png)
+// também foi extraída desses arquivos.
+const EMPRESA_NOME = 'DOIS A ENGENHARIA';
+const EMPRESA_CNPJ = '03.092.799/0001-81';
+const LOGO_PATH = path.join(process.cwd(), 'assets', 'logo-dois-a.png');
+
+const ENTREGA_CLAUSES = [
+  'Declaro estar ciente de que o equipamento me foi entregue em perfeito estado de funcionamento e conservação.',
+  'Comprometo-me a utilizar os equipamentos única e exclusivamente para fins profissionais, não sendo permitido o uso por terceiros ou para atividades de cunho pessoal ou ilegal.',
+  'Fico ciente de que é minha responsabilidade zelar pela conservação, integridade física e segurança dos equipamentos enquanto estiverem sob minha guarda, incluindo cuidados quanto a transporte, armazenamento e uso adequado.',
+  'Comprometo-me a comunicar imediatamente ao setor de TI qualquer dano, extravio, furto ou roubo, bem como qualquer defeito que comprometa o funcionamento dos equipamentos.',
+  'Em caso de dano decorrente de mau uso, negligência ou uso indevido, autorizo a empresa a avaliar e, se for o caso, descontar de minha remuneração o valor referente ao conserto ou substituição dos equipamentos.',
+  'Obrigo-me a devolver os equipamentos ao Setor de Tecnologia da Informação nas mesmas condições em que foram entregues, ressalvado o desgaste natural pelo uso, sempre que solicitado ou ao término do vínculo contratual com a empresa.',
 ] as const;
+
+const DEVOLUCAO_CLAUSES = [
+  'Declaro estar ciente de que o equipamento me foi entregue em perfeito estado de funcionamento e conservação e que estou devolvendo-o da mesma forma.',
+  'Declaro estar ciente de que qualquer dano ocorrido de mal uso poderá/será descontado de meu salário.',
+] as const;
+
+const MESES = [
+  'janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho',
+  'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro',
+];
+
+/**
+ * `utc: true` para datas armazenadas como "dia puro" (meia-noite UTC, ex.:
+ * Asset­Allocation.deliveryDate) — extrair com getters locais erraria o dia
+ * em qualquer servidor com fuso atrás de UTC (ex.: America/Sao_Paulo).
+ * `utc: false` (default) para um instante real como "agora" (new Date()).
+ */
+function dataPorExtenso(d: Date, utc = false): string {
+  const day = utc ? d.getUTCDate() : d.getDate();
+  const month = utc ? d.getUTCMonth() : d.getMonth();
+  const year = utc ? d.getUTCFullYear() : d.getFullYear();
+  return `${day} de ${MESES[month]} de ${year}`;
+}
 
 /**
  * Geração dos relatórios de equipamentos (aba "Relatórios" do frontend).
@@ -514,14 +546,62 @@ export class AssetsExportService {
     });
   }
 
+  private async loadLogo(): Promise<Buffer | null> {
+    try {
+      return await fs.readFile(LOGO_PATH);
+    } catch {
+      return null; // segue sem logo se o arquivo não existir no ambiente
+    }
+  }
+
+  private equipmentLines(asset: AssetForTermo, kind: 'entrega' | 'devolucao'): string[] {
+    const specs = asset.specs as { cpu?: string; ram?: string; storage?: string } | null;
+    const modelo = `${asset.brand} ${asset.model}`.trim();
+    const comCarregador = asset.type === 'NOTEBOOK';
+
+    if (kind === 'entrega') {
+      return [
+        TYPE_LABEL[asset.type],
+        `Modelo: ${modelo}`,
+        `Tombo: ${asset.assetTag}`,
+        `Número de Série: ${asset.serialNumber}`,
+        ...(specs?.cpu ? [`Processador: ${specs.cpu}`] : []),
+        ...(specs?.ram ? [`Memória RAM: ${specs.ram}`] : []),
+        ...(specs?.storage ? [`SSD: ${specs.storage}`] : []),
+        ...(comCarregador ? ['Com Carregador'] : []),
+      ];
+    }
+
+    return [
+      `${TYPE_LABEL[asset.type]} ${modelo}`.trim(),
+      ...(specs?.cpu ? [`Processador: ${specs.cpu}`] : []),
+      ...(specs?.ram ? [`Memória RAM: ${specs.ram}`] : []),
+      ...(specs?.storage ? [`SSD: ${specs.storage}`] : []),
+      ...(comCarregador ? ['Carregador/Fonte de alimentação'] : []),
+      `Número de Série: ${asset.serialNumber}`,
+      `Número do Patrimônio: ${asset.assetTag}`,
+    ];
+  }
+
   /**
-   * Termo de responsabilidade de entrega de equipamento — gerado sob demanda
-   * a partir da alocação ATIVA do ativo (ver AssetsService.findActiveAllocationForTermo).
-   * Pensado para impressão/assinatura manual (ou envio externo por um
-   * serviço de assinatura digital) — o documento assinado depois volta ao
-   * sistema como anexo do ativo (ver AssetsService.addAttachment).
+   * Monta o PDF do termo (entrega ou devolução) — layout e texto replicados
+   * dos modelos oficiais da empresa (.docx fornecidos pelo usuário). Reaproveitado
+   * por generateTermo() e generateTermoDevolucao() abaixo, que só variam o
+   * texto de abertura, as cláusulas e se há "Disposições gerais".
    */
-  generateTermo(asset: AssetForTermo, allocation: AllocationForTermo): Promise<Buffer> {
+  private async renderTermo(opts: {
+    kind: 'entrega' | 'devolucao';
+    title: string;
+    openingParagraph: string;
+    equipmentLines: string[];
+    clauses: readonly string[];
+    disposicoesGerais?: readonly string[];
+    signDateLabel: string;
+    signerName: string;
+    signerCpf?: string | null;
+  }): Promise<Buffer> {
+    const logo = await this.loadLogo();
+
     return new Promise((resolve, reject) => {
       const doc = new PDFDocument({ size: 'A4', margin: 56 });
       const chunks: Buffer[] = [];
@@ -531,64 +611,135 @@ export class AssetsExportService {
 
       const left = doc.page.margins.left;
       const contentWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right;
-      const place = allocation.obra?.name ?? allocation.site?.name ?? allocation.clientName ?? '—';
 
-      doc.font('Helvetica-Bold').fontSize(14).fillColor('#0f172a').text('TERMO DE RESPONSABILIDADE', { align: 'center' });
-      doc.moveDown(0.3);
-      doc.font('Helvetica').fontSize(9).fillColor('#475569').text('Entrega de equipamento de informática', { align: 'center' });
-      doc.moveDown(1.2);
-
-      const field = (label: string, value: string) => {
-        doc.font('Helvetica-Bold').fontSize(9).fillColor('#334155').text(label, { continued: true });
-        doc.font('Helvetica').fillColor('#0f172a').text(` ${value || '—'}`);
-      };
-
-      doc.font('Helvetica-Bold').fontSize(10.5).fillColor('#0f172a').text('Dados do colaborador');
-      doc.moveDown(0.3);
-      field('Nome:', allocation.assignedToName);
-      field('Departamento:', allocation.department?.name ?? '—');
-      field('Obra / Centro de custo:', place);
-      field('Data de entrega:', new Date(allocation.deliveryDate).toLocaleDateString('pt-BR', { timeZone: 'UTC' }));
-      doc.moveDown(0.8);
-
-      doc.font('Helvetica-Bold').fontSize(10.5).fillColor('#0f172a').text('Dados do equipamento');
-      doc.moveDown(0.3);
-      field('Patrimônio:', asset.assetTag);
-      field('Tipo:', TYPE_LABEL[asset.type]);
-      field('Marca / Modelo:', `${asset.brand} ${asset.model}`.trim());
-      field('Nº de série:', asset.serialNumber);
-      if (asset.priceTier) field('Classificação:', asset.priceTier.label);
-      const specs = asset.specs as { cpu?: string; ram?: string; storage?: string } | null;
-      if (specs && (specs.cpu || specs.ram || specs.storage)) {
-        field('Configuração:', [specs.cpu, specs.ram, specs.storage].filter(Boolean).join(' · '));
+      if (logo) {
+        try {
+          const logoWidth = 130;
+          const logoY = doc.y;
+          doc.image(logo, left, logoY, { width: logoWidth });
+          // doc.image() não avança doc.y sozinho — sem isso o título seguinte
+          // sobrepõe a logo. Altura real da logo-dois-a.png é 746x221px.
+          doc.y = logoY + (logoWidth * 221) / 746 + 12;
+        } catch {
+          // logo corrompida/formato inválido — segue sem travar a geração do PDF
+        }
       }
+
+      doc.font('Helvetica-Bold').fontSize(13).fillColor('#0f172a').text(opts.title, { align: 'center' });
       doc.moveDown(1);
 
-      doc.font('Helvetica-Bold').fontSize(10.5).fillColor('#0f172a').text('Termo');
+      doc.font('Helvetica').fontSize(10).fillColor('#0f172a').text(opts.openingParagraph, {
+        width: contentWidth,
+        align: 'justify',
+      });
+      doc.moveDown(1);
+
+      doc.font('Helvetica-Bold').fontSize(10.5).text('1. RELAÇÃO DE EQUIPAMENTOS');
       doc.moveDown(0.3);
-      doc.font('Helvetica').fontSize(9.5).fillColor('#0f172a');
-      TERMO_CLAUSES.forEach((clause, i) => {
-        doc.text(`${i + 1}. ${clause}`, { width: contentWidth, align: 'justify' });
-        doc.moveDown(0.5);
+      doc.font('Helvetica').fontSize(10);
+      for (const line of opts.equipmentLines) {
+        doc.text(line, { width: contentWidth });
+      }
+      doc.moveDown(0.8);
+
+      doc
+        .font('Helvetica-Bold')
+        .fontSize(10.5)
+        .text(`2. CLÁUSULAS DE ${opts.kind === 'entrega' ? 'RESPONSABILIDADE' : 'DEVOLUÇÃO'}`);
+      doc.moveDown(0.3);
+      doc.font('Helvetica').fontSize(9.5);
+      opts.clauses.forEach((clause, i) => {
+        doc.text(`Cláusula ${i + 1}ª – ${clause}`, { width: contentWidth, align: 'justify' });
+        doc.moveDown(0.4);
       });
 
+      if (opts.disposicoesGerais?.length) {
+        doc.moveDown(0.3);
+        doc.font('Helvetica-Bold').fontSize(10.5).text('3. DISPOSIÇÕES GERAIS');
+        doc.moveDown(0.3);
+        doc.font('Helvetica').fontSize(9.5);
+        for (const p of opts.disposicoesGerais) {
+          doc.text(p, { width: contentWidth, align: 'justify' });
+          doc.moveDown(0.4);
+        }
+      }
+
+      doc.moveDown(1);
+      doc.font('Helvetica').fontSize(9.5).text(`Natal/RN, ${opts.signDateLabel}.`);
+
+      doc.moveDown(2.5);
+      const sigWidth = contentWidth;
+      const sigY1 = doc.y;
+      doc.moveTo(left, sigY1).lineTo(left + sigWidth, sigY1).strokeColor('#94a3b8').stroke();
+      doc.font('Helvetica').fontSize(9.5).fillColor('#0f172a');
+      doc.text(opts.signerName, left, sigY1 + 4, { width: sigWidth });
+      if (opts.signerCpf) doc.text(`CPF: ${opts.signerCpf}`, left, doc.y, { width: sigWidth });
+
       doc.moveDown(2);
-      const sigY = doc.y;
-      const sigWidth = (contentWidth - 30) / 2;
-      doc.moveTo(left, sigY).lineTo(left + sigWidth, sigY).strokeColor('#94a3b8').stroke();
-      doc
-        .moveTo(left + sigWidth + 30, sigY)
-        .lineTo(left + sigWidth + 30 + sigWidth, sigY)
-        .strokeColor('#94a3b8')
-        .stroke();
-      doc.font('Helvetica').fontSize(9).fillColor('#334155');
-      doc.text(allocation.assignedToName || 'Colaborador(a)', left, sigY + 4, { width: sigWidth, align: 'center' });
-      doc.text('Responsável TI', left + sigWidth + 30, sigY + 4, { width: sigWidth, align: 'center' });
+      const sigY2 = doc.y;
+      doc.moveTo(left, sigY2).lineTo(left + sigWidth, sigY2).strokeColor('#94a3b8').stroke();
+      doc.text('Responsável do Setor de TI', left, sigY2 + 4, { width: sigWidth });
+      doc.text(`${EMPRESA_NOME} – CNPJ: ${EMPRESA_CNPJ}`, left, doc.y, { width: sigWidth });
 
       doc.moveDown(2);
       doc.font('Helvetica').fontSize(7.5).fillColor('#94a3b8').text(`Documento gerado em ${fmtDateTime(new Date())}`, left);
 
       doc.end();
+    });
+  }
+
+  /**
+   * Termo de responsabilidade (entrega) — gerado sob demanda a partir da
+   * alocação ATIVA do ativo (ver AssetsService.findActiveAllocationForTermo).
+   * Pensado para impressão/assinatura manual — o documento assinado depois
+   * volta ao sistema como anexo do ativo (ver AssetsService.addAttachment).
+   */
+  generateTermo(asset: AssetForTermo, allocation: AllocationForTermo): Promise<Buffer> {
+    const cpf = allocation.cpf?.trim();
+    return this.renderTermo({
+      kind: 'entrega',
+      title: 'TERMO DE RESPONSABILIDADE PELO USO DE EQUIPAMENTOS DE TECNOLOGIA DA INFORMAÇÃO (TI)',
+      openingParagraph:
+        `Pelo presente instrumento particular, eu, ${allocation.assignedToName}, brasileiro(a), ` +
+        `portador(a) do CPF nº ${cpf || 'não informado'}, colaborador(a) da empresa ${EMPRESA_NOME}, ` +
+        `inscrita no CNPJ sob o nº ${EMPRESA_CNPJ}, declaro que recebi, para fins de uso exclusivo em ` +
+        `atividades profissionais relacionadas às minhas funções, o seguinte equipamento de tecnologia ` +
+        `da informação (TI):`,
+      equipmentLines: this.equipmentLines(asset, 'entrega'),
+      clauses: ENTREGA_CLAUSES,
+      disposicoesGerais: [
+        'Este termo entra em vigor na data de sua assinatura e permanecerá válido enquanto o equipamento estiver sob minha responsabilidade.',
+        'Por ser expressão da verdade e para que produza seus efeitos legais, firmo o presente termo em duas vias de igual teor.',
+      ],
+      signDateLabel: dataPorExtenso(new Date(allocation.deliveryDate), true),
+      signerName: allocation.assignedToName,
+      signerCpf: cpf,
+    });
+  }
+
+  /**
+   * Termo de devolução — gerado a partir da alocação ATIVA do ativo (mesma
+   * resolução do termo de entrega), pensado para ser impresso/assinado no
+   * momento em que o colaborador devolve o equipamento fisicamente — ANTES
+   * de registrar a devolução no sistema (ver AssetsController.returnAsset).
+   * Por isso usa a data de hoje: a `returnDate` real só existe depois que a
+   * devolução é confirmada na tela.
+   */
+  generateTermoDevolucao(asset: AssetForTermo, allocation: AllocationForTermo): Promise<Buffer> {
+    const cpf = allocation.cpf?.trim();
+    const rg = allocation.rg?.trim();
+    return this.renderTermo({
+      kind: 'devolucao',
+      title: 'TERMO DE DEVOLUÇÃO DE EQUIPAMENTOS DE TECNOLOGIA DA INFORMAÇÃO (TI)',
+      openingParagraph:
+        `Pelo presente instrumento particular, eu, ${allocation.assignedToName}, CPF: ${cpf || 'não informado'}, ` +
+        `e RG: ${rg || 'não informado'}, colaborador(a) da empresa ${EMPRESA_NOME}, inscrita no CNPJ sob o nº ` +
+        `${EMPRESA_CNPJ}, declaro que devolvi o seguinte equipamento de tecnologia da informação (TI):`,
+      equipmentLines: this.equipmentLines(asset, 'devolucao'),
+      clauses: DEVOLUCAO_CLAUSES,
+      signDateLabel: dataPorExtenso(new Date()),
+      signerName: allocation.assignedToName,
+      signerCpf: cpf,
     });
   }
 }

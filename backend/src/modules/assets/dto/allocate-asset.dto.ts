@@ -6,6 +6,11 @@ export class AllocateAssetDto {
   @IsString()
   assignedToName: string;
 
+  @ApiProperty({ required: false, description: 'CPF do colaborador — opcional, usado no termo de responsabilidade em PDF' })
+  @IsOptional()
+  @IsString()
+  cpf?: string;
+
   @ApiProperty({ required: false, description: 'Obra / centro de custo onde o ativo será instalado (o site/CNPJ é derivado dela)' })
   @IsOptional()
   @IsUUID()
@@ -45,6 +50,16 @@ export class ReturnAssetDto {
   @IsOptional()
   @IsString()
   notes?: string;
+
+  @ApiProperty({ required: false, description: 'CPF do colaborador — opcional, preenche/confirma para o termo de devolução em PDF' })
+  @IsOptional()
+  @IsString()
+  cpf?: string;
+
+  @ApiProperty({ required: false, description: 'RG do colaborador — opcional, pedido pelo termo de devolução em PDF' })
+  @IsOptional()
+  @IsString()
+  rg?: string;
 }
 
 /**
@@ -57,6 +72,11 @@ export class TransferAssetDto {
   @ApiProperty({ description: 'Nome do colaborador ou cliente que vai passar a ficar com o ativo' })
   @IsString()
   assignedToName: string;
+
+  @ApiProperty({ required: false, description: 'CPF do colaborador — opcional, usado no termo de responsabilidade em PDF' })
+  @IsOptional()
+  @IsString()
+  cpf?: string;
 
   @ApiProperty({ required: false, description: 'Nova obra / centro de custo de destino (o site/CNPJ é derivado dela)' })
   @IsOptional()

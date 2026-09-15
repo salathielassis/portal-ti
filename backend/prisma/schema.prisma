@@ -271,6 +271,8 @@ model AssetAllocation {
   assetId String
 
   assignedToName String // nome do colaborador/responsável (pode não ter User no sistema)
+  cpf            String? // opcional — usado nos termos de responsabilidade/devolução em PDF
+  rg             String? // opcional — pedido só pelo termo de devolução
   department     Department? @relation(fields: [departmentId], references: [id])
   departmentId   String?
   site           Site?       @relation(fields: [siteId], references: [id])

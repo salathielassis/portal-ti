@@ -206,6 +206,7 @@ export class AssetsService {
       data: {
         assetId,
         assignedToName: dto.assignedToName,
+        cpf: dto.cpf,
         siteId,
         obraId: dto.obraId,
         departmentId: dto.departmentId,
@@ -292,7 +293,15 @@ export class AssetsService {
     // Sequência simples (sem `$transaction` interativa) — ver nota em `allocate()`.
     const updated = await this.prisma.assetAllocation.update({
       where: { id: activeAllocation.id },
-      data: { returnDate: new Date(dto.returnDate), isActive: false, notes },
+      data: {
+        returnDate: new Date(dto.returnDate),
+        isActive: false,
+        notes,
+        // Preenche/confirma CPF e RG na devolução — útil quando não foram
+        // capturados na entrega mas o termo de devolução em PDF pede os dois.
+        ...(dto.cpf !== undefined && { cpf: dto.cpf }),
+        ...(dto.rg !== undefined && { rg: dto.rg }),
+      },
     });
 
     await this.prisma.assetMovement.create({
@@ -342,6 +351,7 @@ export class AssetsService {
       data: {
         assetId,
         assignedToName: dto.assignedToName,
+        cpf: dto.cpf,
         siteId,
         obraId: dto.obraId,
         departmentId: dto.departmentId,

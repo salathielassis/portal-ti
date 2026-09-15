@@ -102,6 +102,8 @@ interface Asset {
 interface AllocationHistoryEntry {
   id: string;
   assignedToName: string;
+  cpf: string | null;
+  rg: string | null;
   site: { id: string; name: string } | null;
   obra: { id: string; name: string } | null;
   department: { id: string; name: string } | null;
@@ -153,11 +155,11 @@ const emptyForm = {
 
 const today = () => new Date().toISOString().slice(0, 10);
 
-const emptyAllocateForm = { assignedToName: '', obraId: '', deliveryDate: today() };
-const emptyTransferForm = { assignedToName: '', obraId: '', transferDate: today(), notes: '' };
+const emptyAllocateForm = { assignedToName: '', cpf: '', obraId: '', deliveryDate: today() };
+const emptyTransferForm = { assignedToName: '', cpf: '', obraId: '', transferDate: today(), notes: '' };
 const emptyMaintenanceForm = { date: today(), notes: '' };
 const emptyDiscardForm = { date: today(), reason: '' };
-const emptyReturnForm = { returnDate: today(), notes: '' };
+const emptyReturnForm = { returnDate: today(), notes: '', cpf: '', rg: '' };
 
 const TYPE_LABEL: Record<AssetType, string> = {
   NOTEBOOK: 'Notebook',
@@ -312,6 +314,7 @@ export default function AtivosPage() {
 
   const [termoDownloadingId, setTermoDownloadingId] = React.useState<string | null>(null);
   const [termoError, setTermoError] = React.useState<string | null>(null);
+  const [termoDevolucaoDownloadingId, setTermoDevolucaoDownloadingId] = React.useState<string | null>(null);
 
   const [attachmentType, setAttachmentType] = React.useState<AttachmentType>('FOTO');
   const [attachmentFile, setAttachmentFile] = React.useState<File | null>(null);
@@ -452,6 +455,7 @@ export default function AtivosPage() {
         method: 'POST',
         body: JSON.stringify({
           assignedToName: allocateForm.assignedToName,
+          cpf: allocateForm.cpf.trim() || undefined,
           obraId: allocateForm.obraId || undefined,
           deliveryDate: allocateForm.deliveryDate,
         }),
@@ -474,6 +478,8 @@ export default function AtivosPage() {
         body: JSON.stringify({
           returnDate: returnForm.returnDate,
           notes: returnForm.notes || undefined,
+          cpf: returnForm.cpf.trim() || undefined,
+          rg: returnForm.rg.trim() || undefined,
         }),
       });
       setReturningAsset(null);
@@ -493,6 +499,7 @@ export default function AtivosPage() {
         method: 'POST',
         body: JSON.stringify({
           assignedToName: transferForm.assignedToName.trim() || 'Não informado',
+          cpf: transferForm.cpf.trim() || undefined,
           obraId: transferForm.obraId || undefined,
           transferDate: transferForm.transferDate,
           notes: transferForm.notes || undefined,
@@ -613,6 +620,25 @@ export default function AtivosPage() {
       setTermoError(err instanceof ApiError ? err.message : 'Não foi possível gerar o termo.');
     } finally {
       setTermoDownloadingId(null);
+    }
+  }
+
+  /**
+   * Baixa o termo de devolução ANTES de confirmar a devolução em si — usa a
+   * alocação ainda ativa do ativo (mesma resolução do termo de entrega).
+   * Pensado pro fluxo real: imprime/assina no ato da devolução física e só
+   * depois clica em "Confirmar devolução" para registrar no sistema.
+   */
+  async function handleDownloadTermoDevolucao(asset: Asset) {
+    setReturnError(null);
+    setTermoDevolucaoDownloadingId(asset.id);
+    try {
+      const blob = await apiFetchBlob(`/assets/${asset.id}/termo-devolucao`);
+      triggerBlobDownload(blob, `termo-devolucao-${asset.assetTag}.pdf`);
+    } catch (err) {
+      setReturnError(err instanceof ApiError ? err.message : 'Não foi possível gerar o termo de devolução.');
+    } finally {
+      setTermoDevolucaoDownloadingId(null);
     }
   }
 
@@ -1203,6 +1229,15 @@ export default function AtivosPage() {
               />
             </div>
             <div className="space-y-1.5">
+              <Label htmlFor="allocateCpf">CPF (opcional — usado no termo de responsabilidade)</Label>
+              <Input
+                id="allocateCpf"
+                placeholder="000.000.000-00"
+                value={allocateForm.cpf}
+                onChange={(e) => setAllocateForm({ ...allocateForm, cpf: e.target.value })}
+              />
+            </div>
+            <div className="space-y-1.5">
               <Label htmlFor="allocateObraId">Obra / centro de custo (opcional)</Label>
               <Select
                 id="allocateObraId"
@@ -1285,6 +1320,15 @@ export default function AtivosPage() {
               />
             </div>
             <div className="space-y-1.5">
+              <Label htmlFor="transferCpf">CPF (opcional — usado no termo de responsabilidade)</Label>
+              <Input
+                id="transferCpf"
+                placeholder="000.000.000-00"
+                value={transferForm.cpf}
+                onChange={(e) => setTransferForm({ ...transferForm, cpf: e.target.value })}
+              />
+            </div>
+            <div className="space-y-1.5">
               <Label htmlFor="transferObraId">Nova obra / centro de custo (opcional)</Label>
               <Select
                 id="transferObraId"
@@ -1352,6 +1396,30 @@ export default function AtivosPage() {
                 Use a data real da devolução (ex.: a data do e-mail de retorno), não a data de hoje.
               </p>
             </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="returnCpf">CPF (opcional)</Label>
+                <Input
+                  id="returnCpf"
+                  placeholder="000.000.000-00"
+                  value={returnForm.cpf}
+                  onChange={(e) => setReturnForm({ ...returnForm, cpf: e.target.value })}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="returnRg">RG (opcional)</Label>
+                <Input
+                  id="returnRg"
+                  placeholder="0000000000"
+                  value={returnForm.rg}
+                  onChange={(e) => setReturnForm({ ...returnForm, rg: e.target.value })}
+                />
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              CPF/RG usados no termo de devolução em PDF — baixe abaixo antes de confirmar, para imprimir e
+              assinar no ato da devolução física.
+            </p>
             <div className="space-y-1.5">
               <Label htmlFor="returnNotes">Observações (opcional)</Label>
               <Textarea
@@ -1361,7 +1429,19 @@ export default function AtivosPage() {
                 onChange={(e) => setReturnForm({ ...returnForm, notes: e.target.value })}
               />
             </div>
-            <DialogFooter>
+            <DialogFooter className="items-center sm:justify-between">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={!returningAsset || termoDevolucaoDownloadingId === returningAsset.id}
+                onClick={() => returningAsset && handleDownloadTermoDevolucao(returningAsset)}
+              >
+                <FileSignature className="mr-1.5 h-3.5 w-3.5" />
+                {returningAsset && termoDevolucaoDownloadingId === returningAsset.id
+                  ? 'Gerando...'
+                  : 'Baixar termo de devolução'}
+              </Button>
               <Button type="submit">Confirmar devolução</Button>
             </DialogFooter>
           </form>
@@ -1610,6 +1690,13 @@ export default function AtivosPage() {
                         <p className="text-xs text-muted-foreground">
                           {formatDate(a.deliveryDate)} → {formatDate(a.returnDate)}
                         </p>
+                        {(a.cpf || a.rg) && (
+                          <p className="text-xs text-muted-foreground">
+                            {a.cpf && `CPF: ${a.cpf}`}
+                            {a.cpf && a.rg && ' · '}
+                            {a.rg && `RG: ${a.rg}`}
+                          </p>
+                        )}
                         {a.notes && <p className="mt-1 text-xs text-muted-foreground">{a.notes}</p>}
                       </div>
                     ))}
