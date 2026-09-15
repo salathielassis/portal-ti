@@ -1,6 +1,7 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Res, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Res, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import type { Response } from 'express';
-import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { AssetOwnership, AssetStatus, AssetType, UserRole } from '@prisma/client';
 import { AssetsService } from './assets.service';
 import { AssetsExportService, ExportFormat } from './assets-export.service';
@@ -15,6 +16,7 @@ import {
   ReturnFromMaintenanceDto,
   DiscardAssetDto,
 } from './dto/allocate-asset.dto';
+import { UploadAttachmentDto } from './dto/upload-attachment.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
@@ -101,6 +103,15 @@ export class AssetsController {
     res.end(buffer);
   }
 
+  @Get('by-serial/:serialNumber')
+  @ApiOperation({
+    summary:
+      'Busca exata por nº de série — usado pela leitura de código de barras (bipador), que lê o mesmo nº de série já impresso pelo fabricante embaixo do equipamento',
+  })
+  findBySerial(@Param('serialNumber') serialNumber: string) {
+    return this.assetsService.findBySerial(serialNumber);
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'Detalha um ativo: alocações e histórico de movimentação' })
   findOne(@Param('id') id: string) {
@@ -179,5 +190,55 @@ export class AssetsController {
   @ApiOperation({ summary: 'Dá baixa definitiva no ativo (defeito sem conserto viável, perda, etc.)' })
   discard(@Param('id') id: string, @Body() dto: DiscardAssetDto, @CurrentUser() user: { id: string }) {
     return this.assetsService.discard(id, dto, user.id);
+  }
+
+  @Post(':id/attachments')
+  @Roles(UserRole.ADMIN, UserRole.SUPORTE)
+  @ApiOperation({ summary: 'Anexa um arquivo ao ativo (foto do equipamento, nota fiscal, termo assinado, etc.)' })
+  @ApiConsumes('multipart/form-data')
+  @UseInterceptors(FileInterceptor('file'))
+  addAttachment(
+    @Param('id') id: string,
+    @UploadedFile() file: Express.Multer.File,
+    @Body() dto: UploadAttachmentDto,
+    @CurrentUser() user: { id: string },
+  ) {
+    return this.assetsService.addAttachment(id, file, dto.type, user.id);
+  }
+
+  @Get(':id/attachments/:attachmentId/file')
+  @ApiOperation({ summary: 'Baixa o arquivo de um anexo do ativo' })
+  async downloadAttachment(
+    @Param('id') id: string,
+    @Param('attachmentId') attachmentId: string,
+    @Res() res: Response,
+  ) {
+    const { attachment, buffer } = await this.assetsService.getAttachmentFile(id, attachmentId);
+    res.set({
+      'Content-Type': attachment.mimeType,
+      'Content-Disposition': `attachment; filename="${attachment.fileName}"`,
+      'Content-Length': String(buffer.length),
+    });
+    res.end(buffer);
+  }
+
+  @Get(':id/termo')
+  @ApiOperation({ summary: 'Gera o termo de responsabilidade (PDF) da alocação ativa do ativo' })
+  async downloadTermo(@Param('id') id: string, @Res() res: Response) {
+    const { asset, allocation } = await this.assetsService.findActiveAllocationForTermo(id);
+    const buffer = await this.assetsExportService.generateTermo(asset, allocation);
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `attachment; filename="termo-${asset.assetTag}.pdf"`,
+      'Content-Length': String(buffer.length),
+    });
+    res.end(buffer);
+  }
+
+  @Delete(':id/attachments/:attachmentId')
+  @Roles(UserRole.ADMIN, UserRole.SUPORTE)
+  @ApiOperation({ summary: 'Remove um anexo do ativo' })
+  removeAttachment(@Param('id') id: string, @Param('attachmentId') attachmentId: string) {
+    return this.assetsService.removeAttachment(id, attachmentId);
   }
 }

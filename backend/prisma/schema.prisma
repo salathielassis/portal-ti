@@ -37,6 +37,7 @@ model User {
   allocationsMade     AssetAllocation[] @relation("AllocatedBy")
   movementsLogged     AssetMovement[]   @relation("MovementBy")
   reconciliationsDone Reconciliation[]  @relation("ReconciledBy")
+  attachmentsUploaded AssetAttachment[]
 
   @@map("users")
 }
@@ -226,6 +227,7 @@ model Asset {
 
   allocations AssetAllocation[]
   movements   AssetMovement[]
+  attachments AssetAttachment[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -233,6 +235,33 @@ model Asset {
   @@index([status])
   @@index([ownership])
   @@map("assets")
+}
+
+enum AssetAttachmentType {
+  FOTO
+  NOTA_FISCAL
+  TERMO_RESPONSABILIDADE
+  OUTRO
+}
+
+// Foto do equipamento, nota fiscal, termo de responsabilidade assinado
+// digitalizado, etc. — anexados ao cadastro do ativo (bytes ficam em disco
+// via StorageService; aqui só a referência).
+model AssetAttachment {
+  id           String              @id @default(uuid())
+  asset        Asset               @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  assetId      String
+  type         AssetAttachmentType
+  fileName     String // nome original do arquivo
+  fileKey      String // key devolvida pelo StorageService
+  mimeType     String
+  fileSize     Int
+  uploadedBy   User?               @relation(fields: [uploadedById], references: [id])
+  uploadedById String?
+  createdAt    DateTime            @default(now())
+
+  @@index([assetId])
+  @@map("asset_attachments")
 }
 
 // Alocação atual e histórica (quem está usando o ativo agora / no passado)

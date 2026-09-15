@@ -93,6 +93,21 @@ function fmtDateTime(d: Date): string {
   )}`;
 }
 
+type AssetForTermo = Prisma.AssetGetPayload<{ include: { priceTier: true } }>;
+type AllocationForTermo = Prisma.AssetAllocationGetPayload<{
+  include: { site: true; obra: true; department: true };
+}>;
+
+// TODO: substituir por texto do termo de responsabilidade que a empresa já usa
+// (o usuário informou que tem um modelo pronto — assim que enviar, trocar aqui).
+const TERMO_CLAUSES = [
+  'O(a) colaborador(a) acima identificado(a) declara ter recebido o equipamento descrito neste termo, em perfeito estado de uso e funcionamento, ficando responsável pela sua guarda, conservação e correta utilização.',
+  'O equipamento é de propriedade da empresa (ou de terceiro locador, quando aplicável) e deve ser utilizado exclusivamente para fins profissionais relacionados às atividades do colaborador.',
+  'Em caso de dano, perda, furto ou extravio decorrente de mau uso ou negligência, o colaborador poderá responder pelo ressarcimento do equipamento, nos termos da política interna da empresa.',
+  'O colaborador compromete-se a devolver o equipamento, em condições compatíveis com o uso normal, sempre que solicitado pela empresa ou no ato de desligamento, transferência de função ou substituição do equipamento.',
+  'Qualquer defeito, mau funcionamento ou necessidade de manutenção deve ser comunicado imediatamente ao setor de TI.',
+] as const;
+
 /**
  * Geração dos relatórios de equipamentos (aba "Relatórios" do frontend).
  * Reaproveita os mesmos filtros da listagem de ativos (status, propriedade,
@@ -494,6 +509,84 @@ export class AssetsExportService {
         doc.text(String(s.count), left + 320, y + 3.5, { width: 66, align: 'right', lineBreak: false });
         y += rowH;
       });
+
+      doc.end();
+    });
+  }
+
+  /**
+   * Termo de responsabilidade de entrega de equipamento — gerado sob demanda
+   * a partir da alocação ATIVA do ativo (ver AssetsService.findActiveAllocationForTermo).
+   * Pensado para impressão/assinatura manual (ou envio externo por um
+   * serviço de assinatura digital) — o documento assinado depois volta ao
+   * sistema como anexo do ativo (ver AssetsService.addAttachment).
+   */
+  generateTermo(asset: AssetForTermo, allocation: AllocationForTermo): Promise<Buffer> {
+    return new Promise((resolve, reject) => {
+      const doc = new PDFDocument({ size: 'A4', margin: 56 });
+      const chunks: Buffer[] = [];
+      doc.on('data', (c) => chunks.push(c as Buffer));
+      doc.on('end', () => resolve(Buffer.concat(chunks)));
+      doc.on('error', reject);
+
+      const left = doc.page.margins.left;
+      const contentWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right;
+      const place = allocation.obra?.name ?? allocation.site?.name ?? allocation.clientName ?? '—';
+
+      doc.font('Helvetica-Bold').fontSize(14).fillColor('#0f172a').text('TERMO DE RESPONSABILIDADE', { align: 'center' });
+      doc.moveDown(0.3);
+      doc.font('Helvetica').fontSize(9).fillColor('#475569').text('Entrega de equipamento de informática', { align: 'center' });
+      doc.moveDown(1.2);
+
+      const field = (label: string, value: string) => {
+        doc.font('Helvetica-Bold').fontSize(9).fillColor('#334155').text(label, { continued: true });
+        doc.font('Helvetica').fillColor('#0f172a').text(` ${value || '—'}`);
+      };
+
+      doc.font('Helvetica-Bold').fontSize(10.5).fillColor('#0f172a').text('Dados do colaborador');
+      doc.moveDown(0.3);
+      field('Nome:', allocation.assignedToName);
+      field('Departamento:', allocation.department?.name ?? '—');
+      field('Obra / Centro de custo:', place);
+      field('Data de entrega:', new Date(allocation.deliveryDate).toLocaleDateString('pt-BR', { timeZone: 'UTC' }));
+      doc.moveDown(0.8);
+
+      doc.font('Helvetica-Bold').fontSize(10.5).fillColor('#0f172a').text('Dados do equipamento');
+      doc.moveDown(0.3);
+      field('Patrimônio:', asset.assetTag);
+      field('Tipo:', TYPE_LABEL[asset.type]);
+      field('Marca / Modelo:', `${asset.brand} ${asset.model}`.trim());
+      field('Nº de série:', asset.serialNumber);
+      if (asset.priceTier) field('Classificação:', asset.priceTier.label);
+      const specs = asset.specs as { cpu?: string; ram?: string; storage?: string } | null;
+      if (specs && (specs.cpu || specs.ram || specs.storage)) {
+        field('Configuração:', [specs.cpu, specs.ram, specs.storage].filter(Boolean).join(' · '));
+      }
+      doc.moveDown(1);
+
+      doc.font('Helvetica-Bold').fontSize(10.5).fillColor('#0f172a').text('Termo');
+      doc.moveDown(0.3);
+      doc.font('Helvetica').fontSize(9.5).fillColor('#0f172a');
+      TERMO_CLAUSES.forEach((clause, i) => {
+        doc.text(`${i + 1}. ${clause}`, { width: contentWidth, align: 'justify' });
+        doc.moveDown(0.5);
+      });
+
+      doc.moveDown(2);
+      const sigY = doc.y;
+      const sigWidth = (contentWidth - 30) / 2;
+      doc.moveTo(left, sigY).lineTo(left + sigWidth, sigY).strokeColor('#94a3b8').stroke();
+      doc
+        .moveTo(left + sigWidth + 30, sigY)
+        .lineTo(left + sigWidth + 30 + sigWidth, sigY)
+        .strokeColor('#94a3b8')
+        .stroke();
+      doc.font('Helvetica').fontSize(9).fillColor('#334155');
+      doc.text(allocation.assignedToName || 'Colaborador(a)', left, sigY + 4, { width: sigWidth, align: 'center' });
+      doc.text('Responsável TI', left + sigWidth + 30, sigY + 4, { width: sigWidth, align: 'center' });
+
+      doc.moveDown(2);
+      doc.font('Helvetica').fontSize(7.5).fillColor('#94a3b8').text(`Documento gerado em ${fmtDateTime(new Date())}`, left);
 
       doc.end();
     });

@@ -1,7 +1,8 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import { AssetOwnership, AssetStatus, AssetType, MovementType } from '@prisma/client';
+import { AssetAttachmentType, AssetOwnership, AssetStatus, AssetType, MovementType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { EquipmentPricingService } from '../equipment-pricing/equipment-pricing.service';
+import { StorageService } from '../../common/storage/storage.service';
 import { CreateAssetDto } from './dto/create-asset.dto';
 import { UpdateAssetDto } from './dto/update-asset.dto';
 import {
@@ -32,6 +33,7 @@ export class AssetsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly equipmentPricing: EquipmentPricingService,
+    private readonly storage: StorageService,
   ) {}
 
   async create(dto: CreateAssetDto) {
@@ -88,6 +90,25 @@ export class AssetsService {
     });
   }
 
+  /** Busca exata por nº de série — usado pela leitura de código de barras (bipador), que lê o mesmo nº de série já impresso pelo fabricante embaixo do equipamento. */
+  async findBySerial(serialNumber: string) {
+    const asset = await this.prisma.asset.findUnique({
+      where: { serialNumber },
+      include: {
+        supplier: true,
+        contract: true,
+        priceTier: true,
+        allocations: {
+          where: { isActive: true },
+          take: 1,
+          include: { site: true, obra: true, department: true },
+        },
+      },
+    });
+    if (!asset) throw new NotFoundException('Nenhum ativo encontrado com esse número de série');
+    return asset;
+  }
+
   async findOne(id: string) {
     const asset = await this.prisma.asset.findUnique({
       where: { id },
@@ -100,6 +121,7 @@ export class AssetsService {
           include: { site: true, obra: true, department: true },
         },
         movements: { orderBy: { occurredAt: 'desc' } },
+        attachments: { orderBy: { createdAt: 'desc' } },
       },
     });
     if (!asset) throw new NotFoundException('Ativo não encontrado');
@@ -470,5 +492,65 @@ export class AssetsService {
       idleDays: Math.floor((Date.now() - asset.updatedAt.getTime()) / (1000 * 60 * 60 * 24)),
       monthlyCost: asset.contract ? Number(asset.contract.monthlyValuePerAsset) : 0,
     }));
+  }
+
+  /** Ativo + alocação ativa, para montar o termo de responsabilidade (400 se não houver alocação ativa). */
+  async findActiveAllocationForTermo(assetId: string) {
+    const asset = await this.prisma.asset.findUnique({
+      where: { id: assetId },
+      include: {
+        priceTier: true,
+        allocations: {
+          where: { isActive: true },
+          take: 1,
+          include: { site: true, obra: true, department: true },
+        },
+      },
+    });
+    if (!asset) throw new NotFoundException('Ativo não encontrado');
+
+    const allocation = asset.allocations[0];
+    if (!allocation) {
+      throw new BadRequestException('Este ativo não possui uma alocação ativa — não há termo a gerar.');
+    }
+
+    return { asset, allocation };
+  }
+
+  /** Anexa um arquivo (foto, nota fiscal, termo assinado, etc.) ao cadastro do ativo. */
+  async addAttachment(assetId: string, file: Express.Multer.File, type: AssetAttachmentType, userId: string) {
+    await this.findOne(assetId);
+    const fileKey = await this.storage.save(file, 'attachments');
+    return this.prisma.assetAttachment.create({
+      data: {
+        assetId,
+        type,
+        fileName: file.originalname,
+        fileKey,
+        mimeType: file.mimetype,
+        fileSize: file.size,
+        uploadedById: userId,
+      },
+    });
+  }
+
+  private async findAttachmentOrThrow(assetId: string, attachmentId: string) {
+    const attachment = await this.prisma.assetAttachment.findFirst({ where: { id: attachmentId, assetId } });
+    if (!attachment) throw new NotFoundException('Anexo não encontrado');
+    return attachment;
+  }
+
+  /** Devolve os bytes de um anexo para download (o controller monta o Content-Type/Content-Disposition). */
+  async getAttachmentFile(assetId: string, attachmentId: string) {
+    const attachment = await this.findAttachmentOrThrow(assetId, attachmentId);
+    const buffer = await this.storage.readFile(attachment.fileKey);
+    return { attachment, buffer };
+  }
+
+  async removeAttachment(assetId: string, attachmentId: string) {
+    const attachment = await this.findAttachmentOrThrow(assetId, attachmentId);
+    await this.prisma.assetAttachment.delete({ where: { id: attachmentId } });
+    await this.storage.deleteFile(attachment.fileKey);
+    return attachment;
   }
 }

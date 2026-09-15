@@ -14,8 +14,14 @@ import {
   UserCog,
   Pencil,
   Trash2,
+  ScanLine,
+  FileSignature,
+  Paperclip,
+  Download,
+  Upload,
 } from 'lucide-react';
 import { Header } from '@/components/layout/header';
+import { useAuth } from '@/contexts/auth-context';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -41,7 +47,7 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
-import { apiFetch, ApiError } from '@/lib/api-client';
+import { apiFetch, apiFetchBlob, ApiError } from '@/lib/api-client';
 
 type AssetType = 'NOTEBOOK' | 'IMPRESSORA' | 'MONITOR' | 'PERIFERICO' | 'OUTRO';
 type AssetOwnership = 'PROPRIO' | 'LOCADO';
@@ -115,9 +121,21 @@ interface MovementHistoryEntry {
   occurredAt: string;
 }
 
+type AttachmentType = 'FOTO' | 'NOTA_FISCAL' | 'TERMO_RESPONSABILIDADE' | 'OUTRO';
+
+interface AttachmentEntry {
+  id: string;
+  type: AttachmentType;
+  fileName: string;
+  mimeType: string;
+  fileSize: number;
+  createdAt: string;
+}
+
 interface AssetDetail extends Omit<Asset, 'allocations'> {
   allocations: AllocationHistoryEntry[];
   movements: MovementHistoryEntry[];
+  attachments: AttachmentEntry[];
 }
 
 const emptyForm = {
@@ -175,6 +193,31 @@ const MOVEMENT_LABEL: Record<MovementType, string> = {
   MANUTENCAO_SAIDA: 'Retornou da manutenção',
   DESCARTE: 'Descarte',
 };
+
+const ATTACHMENT_TYPE_LABEL: Record<AttachmentType, string> = {
+  FOTO: 'Foto',
+  NOTA_FISCAL: 'Nota fiscal',
+  TERMO_RESPONSABILIDADE: 'Termo de responsabilidade assinado',
+  OUTRO: 'Outro',
+};
+
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/** Dispara o download de um blob já baixado via apiFetchBlob — mesmo padrão usado em relatorios/page.tsx. */
+function triggerBlobDownload(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
 
 function formatDate(value: string | null) {
   if (!value) return '—';
@@ -258,6 +301,22 @@ export default function AtivosPage() {
   const [historyAsset, setHistoryAsset] = React.useState<AssetDetail | null>(null);
   const [historyLoading, setHistoryLoading] = React.useState(false);
   const [historyError, setHistoryError] = React.useState<string | null>(null);
+
+  const { user } = useAuth();
+  const canManageAttachments = user?.role === 'ADMIN' || user?.role === 'SUPORTE';
+
+  const scanInputRef = React.useRef<HTMLInputElement>(null);
+  const [scanCode, setScanCode] = React.useState('');
+  const [scanError, setScanError] = React.useState<string | null>(null);
+  const [scanning, setScanning] = React.useState(false);
+
+  const [termoDownloadingId, setTermoDownloadingId] = React.useState<string | null>(null);
+  const [termoError, setTermoError] = React.useState<string | null>(null);
+
+  const [attachmentType, setAttachmentType] = React.useState<AttachmentType>('FOTO');
+  const [attachmentFile, setAttachmentFile] = React.useState<File | null>(null);
+  const [attachmentUploading, setAttachmentUploading] = React.useState(false);
+  const [attachmentError, setAttachmentError] = React.useState<string | null>(null);
 
   const loadData = React.useCallback(async () => {
     setLoading(true);
@@ -519,6 +578,87 @@ export default function AtivosPage() {
     }
   }
 
+  /**
+   * Leitura rápida por leitor de código de barras (bipador) USB/Bluetooth no
+   * balcão da TI — o leitor "digita" o nº de série (mesmo código já impresso
+   * pelo fabricante embaixo do equipamento) seguido de Enter, o que já
+   * dispara o submit de um <form> comum, sem precisar de nenhuma lib de
+   * câmera/leitura. Sucesso abre direto o histórico do ativo encontrado.
+   */
+  async function handleScan(e: React.FormEvent) {
+    e.preventDefault();
+    const code = scanCode.trim();
+    if (!code) return;
+    setScanError(null);
+    setScanning(true);
+    try {
+      const asset = await apiFetch<Asset>(`/assets/by-serial/${encodeURIComponent(code)}`);
+      await openHistory(asset);
+    } catch (err) {
+      setScanError(err instanceof ApiError ? err.message : 'Não foi possível buscar esse código.');
+    } finally {
+      setScanning(false);
+      setScanCode('');
+      scanInputRef.current?.focus();
+    }
+  }
+
+  async function handleDownloadTermo(asset: Asset) {
+    setTermoError(null);
+    setTermoDownloadingId(asset.id);
+    try {
+      const blob = await apiFetchBlob(`/assets/${asset.id}/termo`);
+      triggerBlobDownload(blob, `termo-${asset.assetTag}.pdf`);
+    } catch (err) {
+      setTermoError(err instanceof ApiError ? err.message : 'Não foi possível gerar o termo.');
+    } finally {
+      setTermoDownloadingId(null);
+    }
+  }
+
+  async function handleUploadAttachment(e: React.FormEvent) {
+    e.preventDefault();
+    if (!historyAsset || !attachmentFile) return;
+    setAttachmentError(null);
+    setAttachmentUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append('file', attachmentFile);
+      formData.append('type', attachmentType);
+      await apiFetch(`/assets/${historyAsset.id}/attachments`, { method: 'POST', body: formData });
+      setAttachmentFile(null);
+      setAttachmentType('FOTO');
+      const detail = await apiFetch<AssetDetail>(`/assets/${historyAsset.id}`);
+      setHistoryAsset(detail);
+    } catch (err) {
+      setAttachmentError(err instanceof ApiError ? err.message : 'Não foi possível enviar o anexo.');
+    } finally {
+      setAttachmentUploading(false);
+    }
+  }
+
+  async function handleDownloadAttachment(attachment: AttachmentEntry) {
+    if (!historyAsset) return;
+    try {
+      const blob = await apiFetchBlob(`/assets/${historyAsset.id}/attachments/${attachment.id}/file`);
+      triggerBlobDownload(blob, attachment.fileName);
+    } catch (err) {
+      setAttachmentError(err instanceof ApiError ? err.message : 'Não foi possível baixar o anexo.');
+    }
+  }
+
+  async function handleDeleteAttachment(attachmentId: string) {
+    if (!historyAsset) return;
+    setAttachmentError(null);
+    try {
+      await apiFetch(`/assets/${historyAsset.id}/attachments/${attachmentId}`, { method: 'DELETE' });
+      const detail = await apiFetch<AssetDetail>(`/assets/${historyAsset.id}`);
+      setHistoryAsset(detail);
+    } catch (err) {
+      setAttachmentError(err instanceof ApiError ? err.message : 'Não foi possível excluir o anexo.');
+    }
+  }
+
   return (
     <>
       <Header breadcrumbs={[{ label: 'Portal TI' }, { label: 'Ativos' }]} />
@@ -664,6 +804,27 @@ export default function AtivosPage() {
           </Dialog>
         </div>
 
+        <Card className="shadow-card">
+          <CardContent className="flex flex-wrap items-center gap-3 p-4">
+            <ScanLine className="h-5 w-5 shrink-0 text-muted-foreground" />
+            <form onSubmit={handleScan} className="flex flex-1 flex-wrap items-center gap-3">
+              <Input
+                ref={scanInputRef}
+                autoFocus
+                className="w-64"
+                placeholder="Leitura rápida — bipe o código de barras do equipamento"
+                value={scanCode}
+                onChange={(e) => setScanCode(e.target.value)}
+                disabled={scanning}
+              />
+              <Button type="submit" variant="outline" size="sm" disabled={scanning || !scanCode.trim()}>
+                {scanning ? 'Buscando...' : 'Buscar'}
+              </Button>
+            </form>
+            {scanError && <p className="text-sm text-destructive">{scanError}</p>}
+          </CardContent>
+        </Card>
+
         <div className="flex flex-wrap gap-3">
           <Select className="w-44" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
             <option value="">Todos os status</option>
@@ -715,6 +876,11 @@ export default function AtivosPage() {
             {loadError && (
               <div className="p-5">
                 <Alert variant="destructive">{loadError}</Alert>
+              </div>
+            )}
+            {!loadError && termoError && (
+              <div className="p-5 pb-0">
+                <Alert variant="destructive">{termoError}</Alert>
               </div>
             )}
 
@@ -783,6 +949,16 @@ export default function AtivosPage() {
                               <DropdownMenuItem onClick={() => openEdit(asset)}>
                                 <Pencil className="mr-2 h-3.5 w-3.5" /> Editar dados do ativo
                               </DropdownMenuItem>
+
+                              {asset.status === 'EM_USO' && (
+                                <DropdownMenuItem
+                                  disabled={termoDownloadingId === asset.id}
+                                  onClick={() => handleDownloadTermo(asset)}
+                                >
+                                  <FileSignature className="mr-2 h-3.5 w-3.5" />
+                                  {termoDownloadingId === asset.id ? 'Gerando termo...' : 'Baixar termo'}
+                                </DropdownMenuItem>
+                              )}
 
                               {asset.status !== 'EM_USO' && asset.status !== 'MANUTENCAO' && asset.status !== 'DEVOLVIDO' && (
                                 <DropdownMenuItem
@@ -1326,6 +1502,90 @@ export default function AtivosPage() {
                     <p className="text-muted-foreground">Armazenamento</p>
                     <p className="font-medium">{historyAsset.specs.storage}</p>
                   </div>
+                )}
+              </div>
+
+              <div>
+                <h3 className="mb-2 flex items-center gap-1.5 text-sm font-semibold">
+                  <Paperclip className="h-3.5 w-3.5" /> Anexos
+                </h3>
+                {attachmentError && (
+                  <Alert variant="destructive" className="mb-2">
+                    {attachmentError}
+                  </Alert>
+                )}
+                {historyAsset.attachments.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">Nenhum anexo enviado ainda.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {historyAsset.attachments.map((att) => (
+                      <div
+                        key={att.id}
+                        className="flex items-center justify-between gap-3 rounded-lg border border-border p-3 text-sm"
+                      >
+                        <div>
+                          <p className="font-medium">{att.fileName}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {ATTACHMENT_TYPE_LABEL[att.type]} · {formatFileSize(att.fileSize)} ·{' '}
+                            {formatDate(att.createdAt)}
+                          </p>
+                        </div>
+                        <div className="flex shrink-0 items-center gap-1">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8"
+                            onClick={() => handleDownloadAttachment(att)}
+                          >
+                            <Download className="h-4 w-4" />
+                          </Button>
+                          {canManageAttachments && (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8 text-destructive hover:text-destructive"
+                              onClick={() => handleDeleteAttachment(att.id)}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {canManageAttachments && (
+                  <form onSubmit={handleUploadAttachment} className="mt-3 flex flex-wrap items-end gap-2">
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">Tipo</Label>
+                      <Select
+                        className="w-56"
+                        value={attachmentType}
+                        onChange={(e) => setAttachmentType(e.target.value as AttachmentType)}
+                      >
+                        {Object.entries(ATTACHMENT_TYPE_LABEL).map(([value, label]) => (
+                          <option key={value} value={value}>
+                            {label}
+                          </option>
+                        ))}
+                      </Select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">Arquivo</Label>
+                      <Input
+                        type="file"
+                        className="w-56"
+                        onChange={(e) => setAttachmentFile(e.target.files?.[0] ?? null)}
+                      />
+                    </div>
+                    <Button type="submit" size="sm" disabled={!attachmentFile || attachmentUploading}>
+                      <Upload className="mr-1.5 h-3.5 w-3.5" />
+                      {attachmentUploading ? 'Enviando...' : 'Enviar'}
+                    </Button>
+                  </form>
                 )}
               </div>
 
