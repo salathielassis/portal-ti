@@ -554,33 +554,39 @@ export class AssetsExportService {
     }
   }
 
-  private equipmentLines(asset: AssetForTermo, kind: 'entrega' | 'devolucao'): string[] {
+  /** Item da lista de equipamentos no formato de marcadores do modelo oficial
+   * (bullet de nível 1 para o equipamento, sub-bullets para os detalhes). */
+  private equipmentBlock(asset: AssetForTermo, kind: 'entrega' | 'devolucao'): { title: string; sub: string[] } {
     const specs = asset.specs as { cpu?: string; ram?: string; storage?: string } | null;
     const modelo = `${asset.brand} ${asset.model}`.trim();
     const comCarregador = asset.type === 'NOTEBOOK';
 
     if (kind === 'entrega') {
-      return [
-        TYPE_LABEL[asset.type],
-        `Modelo: ${modelo}`,
-        `Tombo: ${asset.assetTag}`,
-        `Número de Série: ${asset.serialNumber}`,
+      return {
+        title: TYPE_LABEL[asset.type],
+        sub: [
+          `Modelo: ${modelo}`,
+          `Tombo: ${asset.assetTag}`,
+          `Número de Série: ${asset.serialNumber}`,
+          ...(specs?.cpu ? [`Processador: ${specs.cpu}`] : []),
+          ...(specs?.ram ? [`Memória RAM: ${specs.ram}`] : []),
+          ...(specs?.storage ? [`SSD: ${specs.storage}`] : []),
+          ...(comCarregador ? ['Com Carregador'] : []),
+        ],
+      };
+    }
+
+    return {
+      title: `${TYPE_LABEL[asset.type]} ${modelo}`.trim(),
+      sub: [
         ...(specs?.cpu ? [`Processador: ${specs.cpu}`] : []),
         ...(specs?.ram ? [`Memória RAM: ${specs.ram}`] : []),
         ...(specs?.storage ? [`SSD: ${specs.storage}`] : []),
-        ...(comCarregador ? ['Com Carregador'] : []),
-      ];
-    }
-
-    return [
-      `${TYPE_LABEL[asset.type]} ${modelo}`.trim(),
-      ...(specs?.cpu ? [`Processador: ${specs.cpu}`] : []),
-      ...(specs?.ram ? [`Memória RAM: ${specs.ram}`] : []),
-      ...(specs?.storage ? [`SSD: ${specs.storage}`] : []),
-      ...(comCarregador ? ['Carregador/Fonte de alimentação'] : []),
-      `Número de Série: ${asset.serialNumber}`,
-      `Número do Patrimônio: ${asset.assetTag}`,
-    ];
+        ...(comCarregador ? ['Carregador/Fonte de alimentação'] : []),
+        `Número de Série: ${asset.serialNumber}`,
+        `Número do Patrimônio: ${asset.assetTag}`,
+      ],
+    };
   }
 
   /**
@@ -593,7 +599,7 @@ export class AssetsExportService {
     kind: 'entrega' | 'devolucao';
     title: string;
     openingParagraph: string;
-    equipmentLines: string[];
+    equipment: { title: string; sub: string[] };
     clauses: readonly string[];
     disposicoesGerais?: readonly string[];
     signDateLabel: string;
@@ -612,35 +618,80 @@ export class AssetsExportService {
       const left = doc.page.margins.left;
       const contentWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right;
 
+      // Linha divisória fina entre seções — o modelo oficial usa uma régua
+      // horizontal antes de cada cabeçalho numerado e antes do bloco de data/
+      // assinatura, em vez de só espaçamento em branco.
+      const rule = () => {
+        doc.moveDown(0.3);
+        const ry = doc.y;
+        doc.moveTo(left, ry).lineTo(left + contentWidth, ry).lineWidth(0.75).strokeColor('#cbd5e1').stroke();
+        doc.moveDown(0.5);
+      };
+
+      // Cabeçalho: caixa com moldura, logo à esquerda e título à direita —
+      // reproduz a "tabela" de duas colunas com borda do .docx oficial.
+      const logoColWidth = 96;
+      doc.font('Helvetica-Bold').fontSize(13);
+      const titleColWidth = logo ? contentWidth - logoColWidth - 16 : contentWidth;
+      const titleHeight = doc.heightOfString(opts.title, { width: titleColWidth, align: 'center' });
+      const boxPaddingY = 14;
+      const logoRatio = 221 / 746;
+      const logoDisplayWidth = logoColWidth - 16;
+      const logoDisplayHeight = logoDisplayWidth * logoRatio;
+      const boxHeight = Math.max(titleHeight + boxPaddingY * 2, logoDisplayHeight + boxPaddingY * 2);
+      const boxTop = doc.y;
+
       if (logo) {
         try {
-          const logoWidth = 130;
-          const logoY = doc.y;
-          doc.image(logo, left, logoY, { width: logoWidth });
-          // doc.image() não avança doc.y sozinho — sem isso o título seguinte
-          // sobrepõe a logo. Altura real da logo-dois-a.png é 746x221px.
-          doc.y = logoY + (logoWidth * 221) / 746 + 12;
+          doc.rect(left, boxTop, contentWidth, boxHeight).lineWidth(1).strokeColor('#0f172a').stroke();
+          doc
+            .moveTo(left + logoColWidth, boxTop)
+            .lineTo(left + logoColWidth, boxTop + boxHeight)
+            .lineWidth(1)
+            .strokeColor('#0f172a')
+            .stroke();
+          doc.image(logo, left + 8, boxTop + (boxHeight - logoDisplayHeight) / 2, { width: logoDisplayWidth });
+          doc
+            .font('Helvetica-Bold')
+            .fontSize(13)
+            .fillColor('#0f172a')
+            .text(opts.title, left + logoColWidth + 8, boxTop + (boxHeight - titleHeight) / 2, {
+              width: titleColWidth,
+              align: 'center',
+            });
+          // doc.text() com x explícito deixa doc.x nesse mesmo x — sem resetar,
+          // o próximo parágrafo (sem x explícito) herdava esse deslocamento e
+          // ficava com metade do texto fora da margem direita (invisível).
+          doc.x = left;
+          doc.y = boxTop + boxHeight + 16;
         } catch {
-          // logo corrompida/formato inválido — segue sem travar a geração do PDF
+          // logo corrompida/formato inválido — segue sem caixa/logo, só o título
+          doc.font('Helvetica-Bold').fontSize(13).fillColor('#0f172a').text(opts.title, { align: 'center' });
+          doc.moveDown(1);
         }
+      } else {
+        doc.font('Helvetica-Bold').fontSize(13).fillColor('#0f172a').text(opts.title, { align: 'center' });
+        doc.moveDown(1);
       }
-
-      doc.font('Helvetica-Bold').fontSize(13).fillColor('#0f172a').text(opts.title, { align: 'center' });
-      doc.moveDown(1);
 
       doc.font('Helvetica').fontSize(10).fillColor('#0f172a').text(opts.openingParagraph, {
         width: contentWidth,
         align: 'justify',
       });
-      doc.moveDown(1);
+      rule();
 
       doc.font('Helvetica-Bold').fontSize(10.5).text('1. RELAÇÃO DE EQUIPAMENTOS');
       doc.moveDown(0.3);
+      doc.font('Helvetica-Bold').fontSize(10).text(`•  ${opts.equipment.title}`, left, doc.y, { width: contentWidth });
       doc.font('Helvetica').fontSize(10);
-      for (const line of opts.equipmentLines) {
-        doc.text(line, { width: contentWidth });
+      for (const line of opts.equipment.sub) {
+        doc.text(`-  ${line}`, left + 16, doc.y, { width: contentWidth - 16 });
       }
-      doc.moveDown(0.8);
+      // Mesmo motivo do reset acima: a última linha ficou com x = left + 16 —
+      // sem isso, cláusulas e disposições gerais (width: contentWidth, sem x
+      // explícito) herdavam esse deslocamento e estouravam a margem direita.
+      doc.x = left;
+      rule();
 
       doc
         .font('Helvetica-Bold')
@@ -648,13 +699,15 @@ export class AssetsExportService {
         .text(`2. CLÁUSULAS DE ${opts.kind === 'entrega' ? 'RESPONSABILIDADE' : 'DEVOLUÇÃO'}`);
       doc.moveDown(0.3);
       doc.font('Helvetica').fontSize(9.5);
+      // O termo de devolução mantém as cláusulas coladas (sem espaço entre
+      // elas), diferente do de entrega — replica o espaçamento visto no .docx.
       opts.clauses.forEach((clause, i) => {
         doc.text(`Cláusula ${i + 1}ª – ${clause}`, { width: contentWidth, align: 'justify' });
-        doc.moveDown(0.4);
+        if (opts.kind === 'entrega') doc.moveDown(0.4);
       });
 
       if (opts.disposicoesGerais?.length) {
-        doc.moveDown(0.3);
+        rule();
         doc.font('Helvetica-Bold').fontSize(10.5).text('3. DISPOSIÇÕES GERAIS');
         doc.moveDown(0.3);
         doc.font('Helvetica').fontSize(9.5);
@@ -664,8 +717,8 @@ export class AssetsExportService {
         }
       }
 
-      doc.moveDown(1);
-      doc.font('Helvetica').fontSize(9.5).text(`Natal/RN, ${opts.signDateLabel}.`);
+      rule();
+      doc.font('Helvetica').fontSize(9.5).fillColor('#0f172a').text(`Natal/RN, ${opts.signDateLabel}.`);
 
       doc.moveDown(2.5);
       const sigWidth = contentWidth;
@@ -705,7 +758,7 @@ export class AssetsExportService {
         `inscrita no CNPJ sob o nº ${EMPRESA_CNPJ}, declaro que recebi, para fins de uso exclusivo em ` +
         `atividades profissionais relacionadas às minhas funções, o seguinte equipamento de tecnologia ` +
         `da informação (TI):`,
-      equipmentLines: this.equipmentLines(asset, 'entrega'),
+      equipment: this.equipmentBlock(asset, 'entrega'),
       clauses: ENTREGA_CLAUSES,
       disposicoesGerais: [
         'Este termo entra em vigor na data de sua assinatura e permanecerá válido enquanto o equipamento estiver sob minha responsabilidade.',
@@ -735,7 +788,7 @@ export class AssetsExportService {
         `Pelo presente instrumento particular, eu, ${allocation.assignedToName}, CPF: ${cpf || 'não informado'}, ` +
         `e RG: ${rg || 'não informado'}, colaborador(a) da empresa ${EMPRESA_NOME}, inscrita no CNPJ sob o nº ` +
         `${EMPRESA_CNPJ}, declaro que devolvi o seguinte equipamento de tecnologia da informação (TI):`,
-      equipmentLines: this.equipmentLines(asset, 'devolucao'),
+      equipment: this.equipmentBlock(asset, 'devolucao'),
       clauses: DEVOLUCAO_CLAUSES,
       signDateLabel: dataPorExtenso(new Date()),
       signerName: allocation.assignedToName,
