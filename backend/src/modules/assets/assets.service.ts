@@ -8,6 +8,7 @@ import { UpdateAssetDto } from './dto/update-asset.dto';
 import {
   AllocateAssetDto,
   ReturnAssetDto,
+  ReturnToSupplierDto,
   TransferAssetDto,
   UpdateAssignedToDto,
   SendToMaintenanceDto,
@@ -262,15 +263,14 @@ export class AssetsService {
   }
 
   /**
-   * Registra a devolução do ativo. O status de destino depende da
-   * propriedade: um ativo PRÓPRIO recolhido volta para ESTOQUE (continua
-   * seu, disponível para realocar); um ativo LOCADO devolvido à locadora vai
-   * para DEVOLVIDO — ele não volta a ser "estoque disponível" porque não
-   * está mais fisicamente com a empresa, e não deve ser contado como
-   * ocioso/gerando custo (`findIdle` só considera ESTOQUE). O cadastro e o
-   * histórico completo continuam consultáveis normalmente; a fatura do mês
-   * seguinte simplesmente não vai mais trazer esse equipamento, já que ela
-   * vem do extrato real da locadora, não de um cálculo baseado no status.
+   * Registra a devolução do ativo PARA O ESTOQUE — sempre, independente de
+   * propriedade. Um ativo LOCADO devolvido continua com o contrato de
+   * locação ativo (a locadora só para de cobrar quando avisada — ver
+   * `returnToSupplier()`), então ele fica ocioso em ESTOQUE gerando custo
+   * até ser realocado ou formalmente devolvido à locadora. Isso é
+   * exatamente o que `findIdle()` reporta no card "Equipamentos Ociosos" do
+   * dashboard. Um ativo PRÓPRIO simplesmente volta para o estoque, sem
+   * nenhum contrato envolvido.
    */
   async returnAsset(assetId: string, dto: ReturnAssetDto, userId: string) {
     const asset = await this.findOne(assetId);
@@ -280,8 +280,6 @@ export class AssetsService {
     if (!activeAllocation) {
       throw new BadRequestException('Este ativo não possui uma alocação ativa para devolver');
     }
-
-    const toStatus = asset.ownership === AssetOwnership.LOCADO ? AssetStatus.DEVOLVIDO : AssetStatus.ESTOQUE;
 
     // Anexa a observação da devolução à nota existente da alocação (ex.: a
     // nota deixada pela importação de extrato) em vez de sobrescrevê-la.
@@ -309,18 +307,63 @@ export class AssetsService {
         assetId,
         type: MovementType.DEVOLUCAO,
         fromStatus: asset.status,
-        toStatus,
+        toStatus: AssetStatus.ESTOQUE,
         loggedById: userId,
-        description:
-          toStatus === AssetStatus.DEVOLVIDO
-            ? 'Devolvido à locadora — fim de uso deste equipamento no contrato'
-            : 'Devolução registrada',
+        description: 'Devolução registrada',
       },
     });
 
-    await this.prisma.asset.update({ where: { id: assetId }, data: { status: toStatus } });
+    await this.prisma.asset.update({ where: { id: assetId }, data: { status: AssetStatus.ESTOQUE } });
 
     return updated;
+  }
+
+  /**
+   * Devolução do ativo LOCADO à locadora — formaliza o fim do uso desse
+   * item no contrato (na prática, o e-mail avisando a locadora para parar
+   * de cobrar). Diferente de `returnAsset()`: pode ser chamada tanto de
+   * EM_USO (fecha a alocação ativa, se houver) quanto de ESTOQUE (ativo já
+   * ocioso, sem alocação para fechar) — o destino é sempre DEVOLVIDO, que
+   * `findIdle()` não considera mais ocioso/gerando custo.
+   */
+  async returnToSupplier(assetId: string, dto: ReturnToSupplierDto, userId: string) {
+    const asset = await this.findOne(assetId);
+    if (asset.ownership !== AssetOwnership.LOCADO) {
+      throw new BadRequestException('Só é possível devolver à locadora ativos locados');
+    }
+    if (asset.status === AssetStatus.DEVOLVIDO) {
+      throw new BadRequestException('Este ativo já foi devolvido à locadora');
+    }
+    if (asset.status === AssetStatus.DESCARTADO) {
+      throw new BadRequestException('Este ativo foi descartado — não é possível devolvê-lo à locadora');
+    }
+
+    const activeAllocation = await this.prisma.assetAllocation.findFirst({
+      where: { assetId, isActive: true },
+    });
+
+    // Sequência simples (sem `$transaction` interativa) — ver nota em `allocate()`.
+    if (activeAllocation) {
+      await this.prisma.assetAllocation.update({
+        where: { id: activeAllocation.id },
+        data: { isActive: false, returnDate: new Date(dto.returnDate) },
+      });
+    }
+
+    await this.prisma.assetMovement.create({
+      data: {
+        assetId,
+        type: MovementType.DEVOLUCAO,
+        fromStatus: asset.status,
+        toStatus: AssetStatus.DEVOLVIDO,
+        loggedById: userId,
+        description: dto.notes
+          ? `Devolvido à locadora — ${dto.notes}`
+          : 'Devolvido à locadora — fim de uso deste equipamento no contrato',
+      },
+    });
+
+    return this.prisma.asset.update({ where: { id: assetId }, data: { status: AssetStatus.DEVOLVIDO } });
   }
 
   /**

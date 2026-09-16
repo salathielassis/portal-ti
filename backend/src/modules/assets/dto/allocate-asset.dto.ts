@@ -149,6 +149,24 @@ export class ReturnFromMaintenanceDto {
 }
 
 /**
+ * Devolução do equipamento LOCADO à locadora — encerra o contrato de
+ * locação desse item específico (a partir daí para de gerar custo). Só faz
+ * sentido para ativos locados; diferente de `ReturnAssetDto`, que devolve o
+ * ativo (próprio OU locado) para o ESTOQUE interno mas mantém o contrato
+ * ativo (ainda cobrado, só ocioso, disponível para realocar).
+ */
+export class ReturnToSupplierDto {
+  @ApiProperty({ example: '2026-09-11' })
+  @IsDateString()
+  returnDate: string;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsString()
+  notes?: string;
+}
+
+/**
  * Baixa definitiva do ativo (defeito sem conserto viável, perda, etc.).
  * Diferente de manutenção: não volta pro estoque depois — fica só no
  * histórico. Encerra a alocação ativa, se houver, igual às outras saídas.

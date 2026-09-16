@@ -19,6 +19,7 @@ import {
   Paperclip,
   Download,
   Upload,
+  Truck,
 } from 'lucide-react';
 import { Header } from '@/components/layout/header';
 import { useAuth } from '@/contexts/auth-context';
@@ -160,6 +161,7 @@ const emptyTransferForm = { assignedToName: '', cpf: '', obraId: '', transferDat
 const emptyMaintenanceForm = { date: today(), notes: '' };
 const emptyDiscardForm = { date: today(), reason: '' };
 const emptyReturnForm = { returnDate: today(), notes: '', cpf: '', rg: '' };
+const emptyReturnToSupplierForm = { returnDate: today(), notes: '' };
 
 const TYPE_LABEL: Record<AssetType, string> = {
   NOTEBOOK: 'Notebook',
@@ -313,6 +315,10 @@ export default function AtivosPage() {
   const [returningAsset, setReturningAsset] = React.useState<Asset | null>(null);
   const [returnForm, setReturnForm] = React.useState(emptyReturnForm);
   const [returnError, setReturnError] = React.useState<string | null>(null);
+
+  const [returningToSupplierAsset, setReturningToSupplierAsset] = React.useState<Asset | null>(null);
+  const [returnToSupplierForm, setReturnToSupplierForm] = React.useState(emptyReturnToSupplierForm);
+  const [returnToSupplierError, setReturnToSupplierError] = React.useState<string | null>(null);
 
   const [editingAssignee, setEditingAssignee] = React.useState<Asset | null>(null);
   const [assignedToValue, setAssignedToValue] = React.useState('');
@@ -513,6 +519,28 @@ export default function AtivosPage() {
       await loadData();
     } catch (err) {
       setReturnError(err instanceof ApiError ? err.message : 'Não foi possível registrar a devolução.');
+    }
+  }
+
+  async function handleReturnToSupplierSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!returningToSupplierAsset) return;
+    setReturnToSupplierError(null);
+    try {
+      await apiFetch(`/assets/${returningToSupplierAsset.id}/return-to-supplier`, {
+        method: 'POST',
+        body: JSON.stringify({
+          returnDate: returnToSupplierForm.returnDate,
+          notes: returnToSupplierForm.notes || undefined,
+        }),
+      });
+      setReturningToSupplierAsset(null);
+      setReturnToSupplierForm(emptyReturnToSupplierForm);
+      await loadData();
+    } catch (err) {
+      setReturnToSupplierError(
+        err instanceof ApiError ? err.message : 'Não foi possível registrar a devolução à locadora.',
+      );
     }
   }
 
@@ -1051,10 +1079,21 @@ export default function AtivosPage() {
                                       setReturnError(null);
                                     }}
                                   >
-                                    <PackageMinus className="mr-2 h-3.5 w-3.5" />
-                                    {asset.ownership === 'LOCADO' ? 'Devolver à locadora' : 'Devolver para estoque'}
+                                    <PackageMinus className="mr-2 h-3.5 w-3.5" /> Devolver para estoque
                                   </DropdownMenuItem>
                                 </>
+                              )}
+
+                              {asset.ownership === 'LOCADO' && (asset.status === 'EM_USO' || asset.status === 'ESTOQUE') && (
+                                <DropdownMenuItem
+                                  onClick={() => {
+                                    setReturningToSupplierAsset(asset);
+                                    setReturnToSupplierForm(emptyReturnToSupplierForm);
+                                    setReturnToSupplierError(null);
+                                  }}
+                                >
+                                  <Truck className="mr-2 h-3.5 w-3.5" /> Devolver à locadora
+                                </DropdownMenuItem>
                               )}
 
                               {asset.status !== 'MANUTENCAO' &&
@@ -1245,6 +1284,13 @@ export default function AtivosPage() {
           </DialogHeader>
           <form onSubmit={handleAllocate} className="space-y-4">
             {allocateError && <Alert variant="destructive">{allocateError}</Alert>}
+            {allocatingAsset && <AssetInfoCard asset={allocatingAsset} />}
+            {allocatingAsset?.ownership === 'LOCADO' && (
+              <p className="text-sm text-muted-foreground">
+                Ativo locado saindo do estoque: se ele ainda não está sendo cobrado, esse é o momento de avisar a
+                locadora (por e-mail) informando a data de início da cobrança.
+              </p>
+            )}
             <div className="space-y-1.5">
               <Label htmlFor="assignedToName">Entregar para</Label>
               <Input
@@ -1338,8 +1384,7 @@ export default function AtivosPage() {
               Encerra a alocação atual e abre uma nova no destino informado — use para mover o ativo entre
               obras/filiais (centros de custo) ou entre pessoas/departamentos. Para tirar o ativo de uso sem um
               novo responsável (mandar para o estoque), feche esta modal e use{' '}
-              <strong>{transferringAsset?.ownership === 'LOCADO' ? 'Devolver à locadora' : 'Devolver para estoque'}</strong>{' '}
-              no menu do ativo.
+              <strong>Devolver para estoque</strong> no menu do ativo.
             </p>
             <div className="space-y-1.5">
               <Label htmlFor="transferAssignedTo">Novo responsável</Label>
@@ -1405,18 +1450,21 @@ export default function AtivosPage() {
       <Dialog open={!!returningAsset} onOpenChange={(v) => !v && setReturningAsset(null)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>
-              Devolver {returningAsset?.assetTag}
-              {returningAsset ? (returningAsset.ownership === 'LOCADO' ? ' à locadora' : ' para estoque') : ''}
-            </DialogTitle>
+            <DialogTitle>Devolver {returningAsset?.assetTag} para estoque</DialogTitle>
           </DialogHeader>
           <form onSubmit={handleReturnSubmit} className="space-y-4">
             {returnError && <Alert variant="destructive">{returnError}</Alert>}
             {returningAsset && <AssetInfoCard asset={returningAsset} />}
             <p className="text-sm text-muted-foreground">
-              {returningAsset?.ownership === 'LOCADO'
-                ? 'Ativo locado: vai para o status "Devolvido" — deixa de contar como ocioso/gerando custo, mas continua no cadastro para consulta e histórico.'
-                : 'Ativo próprio: volta para o estoque, disponível para nova alocação.'}
+              Encerra a alocação atual e libera o ativo para o estoque, disponível para nova alocação.
+              {returningAsset?.ownership === 'LOCADO' && (
+                <>
+                  {' '}
+                  O contrato de locação deste equipamento <strong>continua ativo</strong> (ele fica ocioso, mas
+                  ainda gera custo) — quando quiser avisar a locadora para parar de cobrar por ele, use{' '}
+                  <strong>Devolver à locadora</strong> no menu do ativo.
+                </>
+              )}
             </p>
             <div className="space-y-1.5">
               <Label htmlFor="returnDate">Data da devolução</Label>
@@ -1479,6 +1527,50 @@ export default function AtivosPage() {
                   : 'Baixar termo de devolução'}
               </Button>
               <Button type="submit">Confirmar devolução</Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Devolver à locadora */}
+      <Dialog open={!!returningToSupplierAsset} onOpenChange={(v) => !v && setReturningToSupplierAsset(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Devolver {returningToSupplierAsset?.assetTag} à locadora</DialogTitle>
+          </DialogHeader>
+          <form onSubmit={handleReturnToSupplierSubmit} className="space-y-4">
+            {returnToSupplierError && <Alert variant="destructive">{returnToSupplierError}</Alert>}
+            {returningToSupplierAsset && <AssetInfoCard asset={returningToSupplierAsset} />}
+            <p className="text-sm text-muted-foreground">
+              Encerra o contrato de locação deste equipamento — a partir de agora ele para de gerar custo e vai
+              para o status <strong>Devolvido</strong>. Use quando já tiver avisado a locadora (por e-mail) para
+              parar de cobrar por ele. Se o ativo ainda estiver com alguém, a alocação ativa também é encerrada.
+            </p>
+            <div className="space-y-1.5">
+              <Label htmlFor="returnToSupplierDate">Data da devolução à locadora</Label>
+              <Input
+                id="returnToSupplierDate"
+                type="date"
+                required
+                max={today()}
+                value={returnToSupplierForm.returnDate}
+                onChange={(e) => setReturnToSupplierForm({ ...returnToSupplierForm, returnDate: e.target.value })}
+              />
+              <p className="text-xs text-muted-foreground">
+                Use a data combinada com a locadora para parar de cobrar, não necessariamente a data de hoje.
+              </p>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="returnToSupplierNotes">Observações (opcional)</Label>
+              <Textarea
+                id="returnToSupplierNotes"
+                rows={2}
+                value={returnToSupplierForm.notes}
+                onChange={(e) => setReturnToSupplierForm({ ...returnToSupplierForm, notes: e.target.value })}
+              />
+            </div>
+            <DialogFooter>
+              <Button type="submit">Confirmar devolução à locadora</Button>
             </DialogFooter>
           </form>
         </DialogContent>

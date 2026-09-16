@@ -10,6 +10,7 @@ import { UpdateAssetDto } from './dto/update-asset.dto';
 import {
   AllocateAssetDto,
   ReturnAssetDto,
+  ReturnToSupplierDto,
   TransferAssetDto,
   UpdateAssignedToDto,
   SendToMaintenanceDto,
@@ -151,9 +152,20 @@ export class AssetsController {
 
   @Post(':id/return')
   @Roles(UserRole.ADMIN, UserRole.SUPORTE)
-  @ApiOperation({ summary: 'Registra a devolução do ativo, liberando-o para estoque' })
+  @ApiOperation({ summary: 'Registra a devolução do ativo, liberando-o para estoque (contrato de locação, se houver, continua ativo)' })
   returnAsset(@Param('id') id: string, @Body() dto: ReturnAssetDto, @CurrentUser() user: { id: string }) {
     return this.assetsService.returnAsset(id, dto, user.id);
+  }
+
+  @Post(':id/return-to-supplier')
+  @Roles(UserRole.ADMIN, UserRole.SUPORTE)
+  @ApiOperation({ summary: 'Devolve o ativo LOCADO à locadora, encerrando o contrato desse item (para de gerar custo)' })
+  returnToSupplier(
+    @Param('id') id: string,
+    @Body() dto: ReturnToSupplierDto,
+    @CurrentUser() user: { id: string },
+  ) {
+    return this.assetsService.returnToSupplier(id, dto, user.id);
   }
 
   @Post(':id/transfer')
