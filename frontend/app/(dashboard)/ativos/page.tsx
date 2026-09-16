@@ -253,6 +253,32 @@ function locationLabel(alloc: {
   return place ? `${alloc.assignedToName} · ${place}` : alloc.assignedToName;
 }
 
+/** Ficha-resumo do ativo exibida no topo das modais de ação — contexto para
+ * confirmar que é o equipamento certo antes de transferir/devolver, sem
+ * precisar fechar a modal e conferir na tabela. */
+function AssetInfoCard({ asset }: { asset: Asset }) {
+  const activeAllocation = asset.allocations[0] ?? null;
+  return (
+    <div className="space-y-1 rounded-md border bg-muted/40 p-3 text-sm">
+      <div className="flex items-center justify-between">
+        <span className="font-medium">{asset.assetTag}</span>
+        <Badge variant={STATUS_VARIANT[asset.status]}>{STATUS_LABEL[asset.status]}</Badge>
+      </div>
+      <p className="text-muted-foreground">
+        {TYPE_LABEL[asset.type]} · {asset.brand} {asset.model}
+        {specsSummary(asset.specs) ? ` · ${specsSummary(asset.specs)}` : ''}
+      </p>
+      <p className="text-muted-foreground">
+        Nº de série: {asset.serialNumber || '—'} · {asset.ownership === 'LOCADO' ? 'Locado' : 'Próprio'}
+        {asset.contract ? ` · Contrato ${asset.contract.contractNumber}` : ''}
+      </p>
+      <p className="text-muted-foreground">
+        Com: {activeAllocation ? locationLabel(activeAllocation) : 'Ninguém (estoque)'}
+      </p>
+    </div>
+  );
+}
+
 export default function AtivosPage() {
   const [assets, setAssets] = React.useState<Asset[]>([]);
   const [contracts, setContracts] = React.useState<Contract[]>([]);
@@ -498,7 +524,7 @@ export default function AtivosPage() {
       await apiFetch(`/assets/${transferringAsset.id}/transfer`, {
         method: 'POST',
         body: JSON.stringify({
-          assignedToName: transferForm.assignedToName.trim() || 'Não informado',
+          assignedToName: transferForm.assignedToName.trim(),
           cpf: transferForm.cpf.trim() || undefined,
           obraId: transferForm.obraId || undefined,
           transferDate: transferForm.transferDate,
@@ -1016,7 +1042,7 @@ export default function AtivosPage() {
                                       setTransferError(null);
                                     }}
                                   >
-                                    <ArrowRightLeft className="mr-2 h-3.5 w-3.5" /> Transferir
+                                    <ArrowRightLeft className="mr-2 h-3.5 w-3.5" /> Transferir para outra pessoa/obra
                                   </DropdownMenuItem>
                                   <DropdownMenuItem
                                     onClick={() => {
@@ -1025,7 +1051,8 @@ export default function AtivosPage() {
                                       setReturnError(null);
                                     }}
                                   >
-                                    <PackageMinus className="mr-2 h-3.5 w-3.5" /> Devolver
+                                    <PackageMinus className="mr-2 h-3.5 w-3.5" />
+                                    {asset.ownership === 'LOCADO' ? 'Devolver à locadora' : 'Devolver para estoque'}
                                   </DropdownMenuItem>
                                 </>
                               )}
@@ -1306,15 +1333,20 @@ export default function AtivosPage() {
           </DialogHeader>
           <form onSubmit={handleTransfer} className="space-y-4">
             {transferError && <Alert variant="destructive">{transferError}</Alert>}
+            {transferringAsset && <AssetInfoCard asset={transferringAsset} />}
             <p className="text-sm text-muted-foreground">
               Encerra a alocação atual e abre uma nova no destino informado — use para mover o ativo entre
-              obras/filiais (centros de custo) ou entre pessoas/departamentos.
+              obras/filiais (centros de custo) ou entre pessoas/departamentos. Para tirar o ativo de uso sem um
+              novo responsável (mandar para o estoque), feche esta modal e use{' '}
+              <strong>{transferringAsset?.ownership === 'LOCADO' ? 'Devolver à locadora' : 'Devolver para estoque'}</strong>{' '}
+              no menu do ativo.
             </p>
             <div className="space-y-1.5">
               <Label htmlFor="transferAssignedTo">Novo responsável</Label>
               <Input
                 id="transferAssignedTo"
-                placeholder="Nome do colaborador ou cliente (deixe em branco se ainda não souber)"
+                required
+                placeholder="Nome do colaborador ou cliente"
                 value={transferForm.assignedToName}
                 onChange={(e) => setTransferForm({ ...transferForm, assignedToName: e.target.value })}
               />
@@ -1373,10 +1405,14 @@ export default function AtivosPage() {
       <Dialog open={!!returningAsset} onOpenChange={(v) => !v && setReturningAsset(null)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Devolver {returningAsset?.assetTag}</DialogTitle>
+            <DialogTitle>
+              Devolver {returningAsset?.assetTag}
+              {returningAsset ? (returningAsset.ownership === 'LOCADO' ? ' à locadora' : ' para estoque') : ''}
+            </DialogTitle>
           </DialogHeader>
           <form onSubmit={handleReturnSubmit} className="space-y-4">
             {returnError && <Alert variant="destructive">{returnError}</Alert>}
+            {returningAsset && <AssetInfoCard asset={returningAsset} />}
             <p className="text-sm text-muted-foreground">
               {returningAsset?.ownership === 'LOCADO'
                 ? 'Ativo locado: vai para o status "Devolvido" — deixa de contar como ocioso/gerando custo, mas continua no cadastro para consulta e histórico.'
