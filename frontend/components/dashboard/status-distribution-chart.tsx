@@ -63,11 +63,14 @@ export function StatusDistributionChart({ data }: StatusDistributionChartProps) 
               </Pie>
               <Tooltip
                 contentStyle={{
-                  background: 'hsl(var(--card))',
+                  background: 'hsl(var(--popover))',
                   border: '1px solid hsl(var(--border))',
                   borderRadius: 'var(--radius)',
                   fontSize: 12,
+                  color: 'hsl(var(--popover-foreground))',
                 }}
+                labelStyle={{ color: 'hsl(var(--popover-foreground))' }}
+                itemStyle={{ color: 'hsl(var(--popover-foreground))' }}
               />
               <Legend
                 verticalAlign="bottom"
