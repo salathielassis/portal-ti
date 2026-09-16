@@ -161,9 +161,36 @@ dados reais — guarde em local seguro. A pasta `backup/` é git-ignored.
 
 ---
 
-## 8. Reconstruir a VM do zero
+## 8. Dependência de sistema: OCR da guia de entrega (poppler-utils)
 
-1. VM nova com Docker + Node 20 + nginx.
+O módulo `delivery-import` (aba "Importar Guia de Entrega") faz OCR de PDFs
+escaneados via `tesseract.js` (npm, já em `package.json` — nada a instalar
+manualmente), mas a rasterização de PDF→PNG usa o binário de **sistema**
+`pdftoppm`, do pacote `poppler-utils`. Sem ele instalado, o preview falha com
+"Dependência de sistema ausente: pdftoppm".
+
+```bash
+apt-get update && apt-get install -y poppler-utils
+pdftoppm -v   # confirma a instalação
+```
+
+Isso também exige o ajuste de nginx já presente em
+`ops/vm-snapshot/nginx/portal-ti.conf` (`client_max_body_size 35m` e
+`proxy_read_timeout 180s` no `location /api/` — o OCR de uma guia de várias
+páginas pode levar mais de 1 minuto).
+
+**Internet de saída necessária no primeiro uso**: o `tesseract.js` baixa o
+arquivo de idioma (`por.traineddata`, ~2.4MB) de um CDN público na primeira
+vez que o backend processa uma guia — ele fica em cache local depois (pasta
+de trabalho do backend) e não precisa mais de rede. Se a VM não tiver saída
+de internet, baixe `por.traineddata` manualmente (ver docs do `tesseract.js`)
+e copie para onde o processo do backend roda.
+
+---
+
+## 9. Reconstruir a VM do zero
+
+1. VM nova com Docker + Node 20 + nginx + `poppler-utils` (ver seção 8).
 2. `useradd -m ti`; clonar o repo em `/home/ti/apps/portal-ti`.
 3. Restaurar `backend/.env` e `frontend/.env.local` do backup.
 4. `docker compose up -d` (Postgres) e restaurar o dump (seção 3).

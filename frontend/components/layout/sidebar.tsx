@@ -16,6 +16,7 @@ import {
   Boxes,
   Building2,
   FileUp,
+  PackageCheck,
   Tags,
   FileDown,
 } from 'lucide-react';
@@ -37,6 +38,7 @@ const NAV_ITEMS: NavItem[] = [
   { label: 'Preços de Referência', href: '/precos-referencia', icon: Tags },
   { label: 'Financeiro', href: '/financeiro', icon: Wallet },
   { label: 'Importar Extrato', href: '/importar-extrato', icon: FileUp },
+  { label: 'Importar Guia de Entrega', href: '/importar-guia-entrega', icon: PackageCheck },
   { label: 'Conciliação PDF', href: '/conciliacao', icon: ScanLine },
   { label: 'Relatórios', href: '/relatorios', icon: FileDown },
 ];

@@ -9,6 +9,7 @@ import { FinanceModule } from './modules/finance/finance.module';
 import { DepartmentsModule } from './modules/departments/departments.module';
 import { ClientsModule } from './modules/clients/clients.module';
 import { LeaseImportModule } from './modules/lease-import/lease-import.module';
+import { DeliveryImportModule } from './modules/delivery-import/delivery-import.module';
 import { EquipmentPricingModule } from './modules/equipment-pricing/equipment-pricing.module';
 import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { UsersModule } from './modules/users/users.module';
@@ -27,6 +28,7 @@ import { UsersModule } from './modules/users/users.module';
     FinanceModule,
     ReconciliationModule,
     LeaseImportModule,
+    DeliveryImportModule,
     DashboardModule,
   ],
 })

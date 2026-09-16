@@ -20,3 +20,13 @@ Thumbs.db
 # pacotes de backup (podem conter segredos / dados reais)
 backup/*
 !backup/.gitkeep
+
+# planilhas/PDFs de dados reais usados como referência para scripts/parsers
+# (contratos, notas, extratos — nunca versionar, ficam só localmente)
+*.xlsx
+*.xls
+notebooks doisa.xlsx
+Obra*.pdf
+
+# dados de idioma do Tesseract (OCR) baixados automaticamente no 1º uso
+*.traineddata

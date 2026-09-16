@@ -1,8 +1,9 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
-import { AssetOwnership, AssetStatus, AssetType, ContractStatus, InvoiceStatus } from '@prisma/client';
+import { AssetOwnership, AssetStatus, ContractStatus, InvoiceStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { EquipmentPricingService } from '../equipment-pricing/equipment-pricing.service';
 import { classifyEquipmentTier } from '../../common/utils/classify-equipment-tier';
+import { detectAssetType, detectBrand } from '../../common/utils/detect-asset-metadata';
 import {
   LeaseStatementParserService,
   ParsedLeaseItem,
@@ -12,22 +13,6 @@ import { LeaseImportPreview, LeaseImportSummary, PriceMismatchAlert } from './le
 
 /** Abaixo desta diferença (R$), não vale a pena incomodar o usuário — trata como arredondamento. */
 const PRICE_MISMATCH_TOLERANCE = 0.5;
-
-const KNOWN_BRANDS = ['DELL', 'HP', 'LENOVO', 'SAMSUNG', 'POSITIVO', 'ACER', 'ASUS', 'APPLE', 'VAIO'];
-
-function detectBrand(description: string): string {
-  const upper = description.toUpperCase();
-  const found = KNOWN_BRANDS.find((brand) => upper.includes(brand));
-  return found ?? 'NÃO INFORMADA';
-}
-
-function detectAssetType(description: string): AssetType {
-  const upper = description.toUpperCase();
-  if (upper.includes('IMPRESSORA')) return AssetType.IMPRESSORA;
-  if (upper.includes('MONITOR')) return AssetType.MONITOR;
-  if (upper.includes('NOTEBOOK') || upper.includes('NOTBOOK')) return AssetType.NOTEBOOK;
-  return AssetType.OUTRO;
-}
 
 /** Primeiro dia do mês/ano de uma data (usado como chave de competência da fatura). */
 function firstDayOfMonth(date: Date): Date {

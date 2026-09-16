@@ -241,6 +241,7 @@ enum AssetAttachmentType {
   FOTO
   NOTA_FISCAL
   TERMO_RESPONSABILIDADE
+  GUIA_ENTREGA // PDF da Requisição/Guia de Movimentação da locadora (importação de entrega)
   OUTRO
 }
 
