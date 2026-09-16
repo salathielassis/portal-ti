@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Select } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
 import { Alert } from '@/components/ui/alert';
 import { cn } from '@/lib/utils';
@@ -39,6 +40,12 @@ interface ParsedHeader {
   declaredPieceCount: number | null;
 }
 
+interface ExistingObra {
+  id: string;
+  name: string;
+  costCenterLabel: string;
+}
+
 interface PreviewResponse {
   fileKey: string;
   header: ParsedHeader;
@@ -50,7 +57,11 @@ interface PreviewResponse {
     obra: { action: string; costCenterLabel: string; name: string };
     assets: { toCreate: number; toUpdate: number; total: number };
   };
+  existingObras: ExistingObra[];
 }
+
+/** Sentinela pro <select> de obra — "quero criar uma obra nova" (digitada no campo de texto abaixo). */
+const NEW_OBRA_VALUE = '__NOVA__';
 
 interface ExecuteResponse {
   siteCreated: boolean;
@@ -71,6 +82,12 @@ export default function ImportarGuiaEntregaPage() {
   const [confirming, setConfirming] = React.useState(false);
   const [result, setResult] = React.useState<ExecuteResponse | null>(null);
 
+  // Obra escolhida no <select>: uma das já cadastradas no Site, ou "nova"
+  // (digitada no campo de texto). Evita que o texto lido pelo OCR (que pode
+  // vir levemente diferente do nome já usado, ex. "DOIS A - SEDE" vs "EQUIP -
+  // DOIS A NATAL - SEDE") crie sem querer uma obra duplicada.
+  const [obraSelection, setObraSelection] = React.useState<string>(NEW_OBRA_VALUE);
+
   async function handlePreview(e: React.FormEvent) {
     e.preventDefault();
     if (!file) {
@@ -86,6 +103,9 @@ export default function ImportarGuiaEntregaPage() {
       formData.append('file', file);
       const data = await apiFetch<PreviewResponse>('/delivery-import/preview', { method: 'POST', body: formData });
       setPreview(data);
+      const readSiteName = (data.header.siteName ?? '').trim().toLowerCase();
+      const match = data.existingObras.find((o) => o.costCenterLabel.trim().toLowerCase() === readSiteName);
+      setObraSelection(match ? match.costCenterLabel : NEW_OBRA_VALUE);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Não foi possível ler este PDF.');
     } finally {
@@ -95,6 +115,11 @@ export default function ImportarGuiaEntregaPage() {
 
   function updateSiteName(value: string) {
     setPreview((prev) => (prev ? { ...prev, header: { ...prev.header, siteName: value } } : prev));
+  }
+
+  function handleObraSelectionChange(value: string) {
+    setObraSelection(value);
+    if (value !== NEW_OBRA_VALUE) updateSiteName(value);
   }
 
   function updateItemDescription(itemIndex: number, value: string) {
@@ -260,14 +285,37 @@ export default function ImportarGuiaEntregaPage() {
 
                 <div className="space-y-1.5 border-t border-border pt-4">
                   <Label htmlFor="siteName">
-                    Nome do Site (obra de destino) — confira, é o campo mais importante
+                    Obra de destino — confira, é o campo mais importante
                   </Label>
-                  <Input
-                    id="siteName"
-                    value={preview.header.siteName ?? ''}
-                    onChange={(e) => updateSiteName(e.target.value)}
-                    placeholder="Ex.: IBIAPABA - SEDE"
-                  />
+                  {preview.existingObras.length > 0 && (
+                    <Select
+                      id="obraSelection"
+                      value={obraSelection}
+                      onChange={(e) => handleObraSelectionChange(e.target.value)}
+                    >
+                      {preview.existingObras.map((o) => (
+                        <option key={o.id} value={o.costCenterLabel}>
+                          {o.name}
+                        </option>
+                      ))}
+                      <option value={NEW_OBRA_VALUE}>+ Nova obra (digitar abaixo)</option>
+                    </Select>
+                  )}
+                  {(preview.existingObras.length === 0 || obraSelection === NEW_OBRA_VALUE) && (
+                    <Input
+                      id="siteName"
+                      value={preview.header.siteName ?? ''}
+                      onChange={(e) => updateSiteName(e.target.value)}
+                      placeholder="Ex.: IBIAPABA - SEDE"
+                      className={preview.existingObras.length > 0 ? 'mt-1.5' : undefined}
+                    />
+                  )}
+                  {preview.existingObras.length > 0 && obraSelection === NEW_OBRA_VALUE && (
+                    <p className="text-xs text-muted-foreground">
+                      Nenhuma das obras já cadastradas nesse estabelecimento bateu com o que foi lido — confira se não
+                      é o caso de escolher uma das existentes acima em vez de criar uma nova.
+                    </p>
+                  )}
                 </div>
 
                 <div className="flex justify-end gap-2 border-t border-border pt-4">

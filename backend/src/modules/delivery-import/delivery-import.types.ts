@@ -15,6 +15,8 @@ export interface DeliveryImportPreview {
   items: ParsedDeliveryItem[];
   warnings: string[];
   diff: DeliveryImportDiff;
+  /** Obras já cadastradas no Site resolvido (vazio se o Site ainda não existe) — a tela oferece como opção em vez de deixar digitar um nome novo por engano. */
+  existingObras: { id: string; name: string; costCenterLabel: string }[];
 }
 
 export interface DeliveryImportSummary {

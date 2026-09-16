@@ -43,12 +43,21 @@ export class DeliveryImportService {
     ]);
 
     const costCenterLabel = header.siteName ?? '';
-    const existingObra =
-      existingSite && costCenterLabel
-        ? await this.prisma.obra.findUnique({
-            where: { siteId_costCenterLabel: { siteId: existingSite.id, costCenterLabel } },
-          })
-        : null;
+    const [existingObra, existingObras] = existingSite
+      ? await Promise.all([
+          costCenterLabel
+            ? this.prisma.obra.findUnique({
+                where: { siteId_costCenterLabel: { siteId: existingSite.id, costCenterLabel } },
+              })
+            : null,
+          // Obras já cadastradas neste Site — a tela mostra como opções pra
+          // escolher, em vez de deixar o usuário digitar um nome levemente
+          // diferente do já usado (ex.: OCR lê "DOIS A - SEDE" mas a obra que
+          // já recebe locados na matriz se chama "EQUIP - DOIS A NATAL -
+          // SEDE") e acabar criando uma obra duplicada por engano.
+          this.prisma.obra.findMany({ where: { siteId: existingSite.id, active: true }, orderBy: { name: 'asc' } }),
+        ])
+      : [null, []];
 
     const serviceTags = items.flatMap((i) => i.serials.map((s) => s.serviceTag)).filter(Boolean);
     const existingAssets = serviceTags.length
@@ -84,6 +93,7 @@ export class DeliveryImportService {
         },
         assets: { toCreate: totalSerials - toUpdate, toUpdate, total: totalSerials },
       },
+      existingObras: existingObras.map((o) => ({ id: o.id, name: o.name, costCenterLabel: o.costCenterLabel })),
     };
   }
 
