@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
 import { ClientsService } from './clients.service';
@@ -6,6 +6,8 @@ import { CreateClientDto } from './dto/create-client.dto';
 import { CreateSiteDto } from './dto/create-site.dto';
 import { CreateObraDto } from './dto/create-obra.dto';
 import { UpdateObraDto } from './dto/update-obra.dto';
+import { UpdateSiteDto } from './dto/update-site.dto';
+import { MergeObraDto } from './dto/merge-obra.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
@@ -67,5 +69,40 @@ export class ClientsController {
   @ApiOperation({ summary: 'Renomeia / ativa / desativa uma obra' })
   updateObra(@Param('id') id: string, @Body() dto: UpdateObraDto) {
     return this.clientsService.updateObra(id, dto);
+  }
+
+  @Post('obras/:id/merge')
+  @Roles(UserRole.ADMIN, UserRole.FINANCEIRO)
+  @ApiOperation({ summary: 'Mescla uma obra duplicada em outra (move alocações e contratos, depois exclui a duplicada)' })
+  mergeObra(@Param('id') id: string, @Body() dto: MergeObraDto) {
+    return this.clientsService.mergeObra(id, dto.targetObraId);
+  }
+
+  @Delete('obras/:id')
+  @Roles(UserRole.ADMIN, UserRole.FINANCEIRO)
+  @ApiOperation({ summary: 'Exclui uma obra sem alocações nem contratos' })
+  removeObra(@Param('id') id: string) {
+    return this.clientsService.removeObra(id);
+  }
+
+  @Patch('sites/:id')
+  @Roles(UserRole.ADMIN)
+  @ApiOperation({ summary: 'Edita um estabelecimento (nome, matriz, endereço, contato) — CNPJ não muda' })
+  updateSite(@Param('id') id: string, @Body() dto: UpdateSiteDto) {
+    return this.clientsService.updateSite(id, dto);
+  }
+
+  @Delete('sites/:id')
+  @Roles(UserRole.ADMIN)
+  @ApiOperation({ summary: 'Exclui um estabelecimento vazio (sem obras, alocações nem contratos)' })
+  removeSite(@Param('id') id: string) {
+    return this.clientsService.removeSite(id);
+  }
+
+  @Delete(':id')
+  @Roles(UserRole.ADMIN)
+  @ApiOperation({ summary: 'Exclui um cliente sem estabelecimentos' })
+  removeClient(@Param('id') id: string) {
+    return this.clientsService.removeClient(id);
   }
 }

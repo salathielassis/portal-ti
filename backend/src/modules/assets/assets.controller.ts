@@ -36,8 +36,8 @@ export class AssetsController {
   @Post()
   @Roles(UserRole.ADMIN, UserRole.SUPORTE)
   @ApiOperation({ summary: 'Cadastra um novo ativo (notebook, impressora, etc.)' })
-  create(@Body() dto: CreateAssetDto) {
-    return this.assetsService.create(dto);
+  create(@Body() dto: CreateAssetDto, @CurrentUser() user: { id: string }) {
+    return this.assetsService.create(dto, user.id);
   }
 
   @Get()

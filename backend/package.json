@@ -11,7 +11,9 @@
     "prisma:seed": "ts-node prisma/seed.ts",
     "set-password": "ts-node scripts/set-password.ts",
     "remove-seed-demo-data": "ts-node scripts/remove-seed-demo-data.ts",
-    "import-doisa-notebooks": "ts-node scripts/import-doisa-notebooks.ts"
+    "import-doisa-notebooks": "ts-node scripts/import-doisa-notebooks.ts",
+    "reorganize-asset-descriptions": "ts-node scripts/reorganize-asset-descriptions.ts",
+    "check-duplicates": "ts-node scripts/check-duplicates.ts"
   },
   "prisma": {
     "seed": "ts-node prisma/seed.ts"

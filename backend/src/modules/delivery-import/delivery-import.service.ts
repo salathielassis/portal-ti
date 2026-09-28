@@ -1,8 +1,13 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
-import { AssetAttachmentType, AssetOwnership, AssetStatus, MovementType } from '@prisma/client';
+import { AssetAttachmentType, AssetOwnership, AssetStatus, MovementType, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { StorageService } from '../../common/storage/storage.service';
-import { detectAssetType, detectBrand } from '../../common/utils/detect-asset-metadata';
+import {
+  buildSpecsFromDescription,
+  parseEquipmentDescription,
+} from '../../common/utils/parse-equipment-description';
+import { findObraByLabel, findObraByLabelInClient } from '../../common/utils/obra-matching';
+import { assetIdentifierFilter, normalizeAssetTag, normalizeSerial } from '../../common/utils/asset-identifiers';
 import { DeliveryNoteOcrService } from './ocr/delivery-note-ocr.service';
 import { DeliveryNoteParserService, LOCAINFO_CNPJ, LOCAINFO_NAME } from './parsers/delivery-note-parser.service';
 import { ConfirmDeliveryImportDto } from './dto/confirm-delivery-import.dto';
@@ -45,11 +50,7 @@ export class DeliveryImportService {
     const costCenterLabel = header.siteName ?? '';
     const [existingObra, existingObras] = existingSite
       ? await Promise.all([
-          costCenterLabel
-            ? this.prisma.obra.findUnique({
-                where: { siteId_costCenterLabel: { siteId: existingSite.id, costCenterLabel } },
-              })
-            : null,
+          costCenterLabel ? findObraByLabel(this.prisma, existingSite.id, costCenterLabel) : null,
           // Obras já cadastradas neste Site — a tela mostra como opções pra
           // escolher, em vez de deixar o usuário digitar um nome levemente
           // diferente do já usado (ex.: OCR lê "DOIS A - SEDE" mas a obra que
@@ -59,14 +60,14 @@ export class DeliveryImportService {
         ])
       : [null, []];
 
-    const serviceTags = items.flatMap((i) => i.serials.map((s) => s.serviceTag)).filter(Boolean);
+    const serviceTags = items.flatMap((i) => i.serials.map((s) => normalizeSerial(s.serviceTag))).filter(Boolean);
     const existingAssets = serviceTags.length
       ? await this.prisma.asset.findMany({
-          where: { serialNumber: { in: serviceTags } },
+          where: assetIdentifierFilter(serviceTags, []),
           select: { serialNumber: true },
         })
       : [];
-    const existingSerialSet = new Set(existingAssets.map((a) => a.serialNumber));
+    const existingSerialSet = new Set(existingAssets.map((a) => normalizeSerial(a.serialNumber)));
     const totalSerials = serviceTags.length;
     const toUpdate = serviceTags.filter((s) => existingSerialSet.has(s)).length;
 
@@ -113,7 +114,7 @@ export class DeliveryImportService {
     // de uma falha parcial não duplica nada.
     const client = await this.upsertClient(clientCnpjRoot, dto.header.clientName);
     const site = await this.upsertSite(dto.header, client.id);
-    const obra = await this.upsertObra(site.id, dto.header.siteName);
+    const obra = await this.upsertObra(site.id, client.id, dto.header.siteName);
     const supplier = await this.upsertSupplier();
 
     let assetsCreated = 0;
@@ -127,28 +128,32 @@ export class DeliveryImportService {
 
     for (const item of dto.items) {
       for (const serial of item.serials) {
-        const serviceTag = serial.serviceTag.trim().toUpperCase();
-        const assetTag = serial.assetTag.trim();
+        const serviceTag = normalizeSerial(serial.serviceTag);
+        const assetTag = normalizeAssetTag(serial.assetTag);
         if (!serviceTag || !assetTag) {
           warnings.push(`Item "${item.description}" tem um número de série ou tombo vazio — ignorado.`);
           continue;
         }
 
         const existingAsset = await this.prisma.asset.findFirst({
-          where: { OR: [{ serialNumber: serviceTag }, { assetTag }] },
+          where: assetIdentifierFilter([serviceTag], [assetTag]),
         });
 
         let asset;
         if (!existingAsset) {
+          const parsed = parseEquipmentDescription(item.description);
           asset = await this.prisma.asset.create({
             data: {
               assetTag,
               serialNumber: serviceTag,
-              type: detectAssetType(item.description),
+              type: parsed.type,
               ownership: AssetOwnership.LOCADO,
-              brand: detectBrand(item.description),
-              model: item.description,
-              specs: { raw: item.description, codigo: item.codigo ?? null, referencia: item.referencia ?? null },
+              brand: parsed.brand,
+              model: parsed.model,
+              specs: buildSpecsFromDescription(parsed, item.description, {
+                codigo: item.codigo ?? null,
+                referencia: item.referencia ?? null,
+              }) as Prisma.InputJsonValue,
               status: AssetStatus.EM_USO,
               contractId: null,
               supplierId: supplier.id,
@@ -277,11 +282,14 @@ export class DeliveryImportService {
     return { ...created, wasCreated: true };
   }
 
-  private async upsertObra(siteId: string, siteName: string) {
+  private async upsertObra(siteId: string, clientId: string, siteName: string) {
     const costCenterLabel = siteName || '(SEM NOME DE SITE)';
-    const existing = await this.prisma.obra.findUnique({
-      where: { siteId_costCenterLabel: { siteId, costCenterLabel } },
-    });
+    // Mesmo casamento tolerante da importação de extrato (sem acento/espaço/
+    // caixa, incluindo apelidos): primeiro no próprio CNPJ, depois em
+    // qualquer obra do cliente — nunca cria obra com nome já existente.
+    const existing =
+      (await findObraByLabel(this.prisma, siteId, costCenterLabel)) ??
+      (await findObraByLabelInClient(this.prisma, clientId, costCenterLabel));
     if (existing) return { ...existing, wasCreated: false };
     const created = await this.prisma.obra.create({ data: { siteId, costCenterLabel, name: costCenterLabel } });
     return { ...created, wasCreated: true };

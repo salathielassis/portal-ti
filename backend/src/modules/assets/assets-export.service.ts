@@ -54,6 +54,10 @@ interface ExportRow {
   type: string;
   brand: string;
   model: string;
+  cpu: string;
+  ram: string;
+  storage: string;
+  gpu: string;
   ownership: string;
   status: string;
   priceTierLabel: string;
@@ -219,12 +223,17 @@ export class AssetsExportService {
       const alloc = a.allocations[0] ?? null;
       const ref = a.priceTier ? Number(a.priceTier.referenceValue) : null;
       const monthly = a.monthlyValue != null ? Number(a.monthlyValue) : null;
+      const specs = (a.specs as { cpu?: string; ram?: string; storage?: string; gpu?: string } | null) ?? {};
       return {
         assetTag: a.assetTag,
         serialNumber: a.serialNumber,
         type: TYPE_LABEL[a.type],
         brand: a.brand,
         model: a.model,
+        cpu: specs.cpu ?? '',
+        ram: specs.ram ?? '',
+        storage: specs.storage ?? '',
+        gpu: specs.gpu ?? '',
         ownership: OWNERSHIP_LABEL[a.ownership],
         status: STATUS_LABEL[a.status],
         priceTierLabel: a.priceTier?.label ?? '',
@@ -315,6 +324,10 @@ export class AssetsExportService {
       { header: 'Tipo', key: 'type', width: 12 },
       { header: 'Marca', key: 'brand', width: 14 },
       { header: 'Modelo', key: 'model', width: 26 },
+      { header: 'Processador', key: 'cpu', width: 20 },
+      { header: 'Memória RAM', key: 'ram', width: 12 },
+      { header: 'Armazenamento', key: 'storage', width: 14 },
+      { header: 'Placa de vídeo', key: 'gpu', width: 18 },
       { header: 'Propriedade', key: 'ownership', width: 12 },
       { header: 'Status', key: 'status', width: 12 },
       { header: 'Tipo de referência', key: 'priceTierLabel', width: 22 },
@@ -557,7 +570,7 @@ export class AssetsExportService {
   /** Item da lista de equipamentos no formato de marcadores do modelo oficial
    * (bullet de nível 1 para o equipamento, sub-bullets para os detalhes). */
   private equipmentBlock(asset: AssetForTermo, kind: 'entrega' | 'devolucao'): { title: string; sub: string[] } {
-    const specs = asset.specs as { cpu?: string; ram?: string; storage?: string } | null;
+    const specs = asset.specs as { cpu?: string; ram?: string; storage?: string; gpu?: string } | null;
     const modelo = `${asset.brand} ${asset.model}`.trim();
     const comCarregador = asset.type === 'NOTEBOOK';
 
@@ -571,6 +584,7 @@ export class AssetsExportService {
           ...(specs?.cpu ? [`Processador: ${specs.cpu}`] : []),
           ...(specs?.ram ? [`Memória RAM: ${specs.ram}`] : []),
           ...(specs?.storage ? [`SSD: ${specs.storage}`] : []),
+          ...(specs?.gpu ? [`Placa de vídeo: ${specs.gpu}`] : []),
           ...(comCarregador ? ['Com Carregador'] : []),
         ],
       };
@@ -582,6 +596,7 @@ export class AssetsExportService {
         ...(specs?.cpu ? [`Processador: ${specs.cpu}`] : []),
         ...(specs?.ram ? [`Memória RAM: ${specs.ram}`] : []),
         ...(specs?.storage ? [`SSD: ${specs.storage}`] : []),
+        ...(specs?.gpu ? [`Placa de vídeo: ${specs.gpu}`] : []),
         ...(comCarregador ? ['Carregador/Fonte de alimentação'] : []),
         `Número de Série: ${asset.serialNumber}`,
         `Número do Patrimônio: ${asset.assetTag}`,

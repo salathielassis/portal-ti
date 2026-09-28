@@ -142,7 +142,7 @@ export default function ConciliacaoPage() {
 
   return (
     <>
-      <Header breadcrumbs={[{ label: 'Portal TI' }, { label: 'Conciliação PDF' }]} />
+      <Header breadcrumbs={[{ label: 'Portal TI' }, { label: 'Conciliação Bancária' }]} />
 
       <main className="space-y-6 p-6">
         <div className="flex items-start justify-between gap-4">

@@ -1,7 +1,7 @@
 'use client';
 
 import * as React from 'react';
-import { Building2, MapPin, Pencil, Plus, HardHat } from 'lucide-react';
+import { Building2, MapPin, Merge, Pencil, Plus, HardHat, Trash2 } from 'lucide-react';
 import { Header } from '@/components/layout/header';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -9,6 +9,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Alert } from '@/components/ui/alert';
+import { Select } from '@/components/ui/select';
 import {
   Dialog,
   DialogContent,
@@ -23,6 +24,7 @@ interface Obra {
   id: string;
   name: string;
   costCenterLabel: string;
+  aliases: string[];
   active: boolean;
   _count: { allocations: number; contracts: number };
 }
@@ -33,8 +35,13 @@ interface Site {
   costCenterLabel: string | null;
   cnpj: string;
   isHeadquarters: boolean;
+  addressStreet: string | null;
+  addressNumber: string | null;
   addressCity: string | null;
   addressState: string | null;
+  contactName: string | null;
+  contactPhone: string | null;
+  contactEmail: string | null;
   obras: Obra[];
 }
 
@@ -46,6 +53,22 @@ interface ClientWithSites {
 }
 
 const emptyClientForm = { name: '', cnpjRoot: '' };
+
+/** "03092799000343" -> "03.092.799/0003-43" */
+function formatCnpj(cnpj: string) {
+  const d = cnpj.replace(/\D/g, '');
+  return d.length === 14 ? d.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5') : cnpj;
+}
+
+/** Mesma normalização do backend (sem acento/pontuação/caixa) — só para não repetir o nome da obra na linha "reconhece". */
+function normalizeLabel(value: string) {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, ' ')
+    .trim();
+}
 
 const emptySiteForm = {
   name: '',
@@ -64,9 +87,10 @@ const emptySiteForm = {
 /**
  * Hierarquia Cliente (grupo empresarial) → Estabelecimento (Site, com CNPJ
  * próprio) → Obra (centro de custo / canteiro, a CLASSIFICAÇÃO do extrato).
- * A maioria nasce automaticamente pela importação de extrato; o cadastro e a
- * renomeação manual servem para dar nome às obras que a importação antiga
- * deixou rotuladas só pelo número do contrato.
+ * A maioria nasce automaticamente pela importação de extrato; o cadastro, a
+ * edição, a exclusão e a mesclagem manuais servem para organizar o que a
+ * importação criou (ex.: obra duplicada por grafia diferente da
+ * classificação, estabelecimento com nome de obra).
  */
 export default function ClientesPage() {
   const [clients, setClients] = React.useState<ClientWithSites[]>([]);
@@ -83,8 +107,11 @@ export default function ClientesPage() {
   const [siteFormError, setSiteFormError] = React.useState<string | null>(null);
   const [submittingSite, setSubmittingSite] = React.useState(false);
 
-  const [obraDialogSite, setObraDialogSite] = React.useState<Site | null>(null);
+  const [obraDialogClient, setObraDialogClient] = React.useState<ClientWithSites | null>(null);
   const [editingObra, setEditingObra] = React.useState<Obra | null>(null);
+  const [editingSite, setEditingSite] = React.useState<Site | null>(null);
+  const [mergingObra, setMergingObra] = React.useState<{ obra: Obra; client: ClientWithSites } | null>(null);
+  const [actionError, setActionError] = React.useState<string | null>(null);
 
   const loadClients = React.useCallback(async () => {
     setLoading(true);
@@ -119,6 +146,17 @@ export default function ClientesPage() {
       setClientFormError(err instanceof ApiError ? err.message : 'Não foi possível cadastrar o cliente.');
     } finally {
       setSubmittingClient(false);
+    }
+  }
+
+  async function handleDelete(path: string, what: string) {
+    if (!window.confirm(`Excluir ${what}? Essa ação não pode ser desfeita.`)) return;
+    setActionError(null);
+    try {
+      await apiFetch(path, { method: 'DELETE' });
+      await loadClients();
+    } catch (err) {
+      setActionError(err instanceof ApiError ? err.message : `Não foi possível excluir ${what}.`);
     }
   }
 
@@ -163,9 +201,8 @@ export default function ClientesPage() {
           <div>
             <h1 className="text-2xl font-semibold tracking-tight">Clientes e Obras</h1>
             <p className="text-sm text-muted-foreground">
-              Cliente = grupo empresarial (raiz do CNPJ). Abaixo dele, cada <strong>estabelecimento</strong> tem
-              CNPJ próprio (matriz, filial de um estado, SPE); e cada <strong>obra</strong> dentro do
-              estabelecimento é o centro de custo onde os ativos ficam de fato alocados.
+              Cada <strong>obra</strong> é onde os ativos ficam de fato alocados. Abaixo do nome aparece o CNPJ em
+              que a locadora fatura aquela obra (matriz ou filial do estado).
             </p>
           </div>
 
@@ -221,6 +258,7 @@ export default function ClientesPage() {
         </div>
 
         {loadError && <Alert variant="destructive">{loadError}</Alert>}
+        {actionError && <Alert variant="destructive">{actionError}</Alert>}
         {!loadError && loading && <p className="text-sm text-muted-foreground">Carregando...</p>}
 
         {!loadError && !loading && clients.length === 0 && (
@@ -234,94 +272,168 @@ export default function ClientesPage() {
         )}
 
         <div className="grid gap-4 lg:grid-cols-2">
-          {clients.map((client) => (
-            <Card key={client.id} className="shadow-card">
-              <CardContent className="space-y-3 p-5">
-                <div className="flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-2">
-                    <Building2 className="h-4 w-4 text-primary" />
-                    <h2 className="font-semibold">{client.name}</h2>
-                    <span className="text-xs text-muted-foreground">raiz CNPJ {client.cnpjRoot}</span>
-                  </div>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => {
-                      setSiteDialogClient(client);
-                      setSiteForm(emptySiteForm);
-                      setSiteFormError(null);
-                    }}
-                  >
-                    <Plus className="mr-1.5 h-3.5 w-3.5" /> Novo estabelecimento
-                  </Button>
-                </div>
-
-                {client.sites.length === 0 && (
-                  <p className="text-sm text-muted-foreground">Nenhum estabelecimento cadastrado ainda.</p>
-                )}
-
-                <div className="space-y-3">
-                  {client.sites.map((site) => (
-                    <div key={site.id} className="rounded-lg border border-border p-3">
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="flex items-start gap-2">
-                          <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
-                          <div>
-                            <p className="text-sm font-medium">
-                              {site.name}
-                              {site.isHeadquarters && (
-                                <Badge className="ml-2 align-middle">Matriz</Badge>
-                              )}
-                            </p>
-                            <p className="text-xs text-muted-foreground">
-                              CNPJ {site.cnpj}
-                              {site.addressCity &&
-                                ` · ${site.addressCity}${site.addressState ? '/' + site.addressState : ''}`}
-                            </p>
-                          </div>
-                        </div>
+          {clients.map((client) => {
+            // O controle do dia a dia é pela OBRA — ela é o item principal. O
+            // estabelecimento (CNPJ onde a locadora fatura) aparece só como
+            // detalhe de cada obra e, para manutenção, na seção recolhida abaixo.
+            const obras = client.sites
+              .flatMap((site) => site.obras.map((obra) => ({ obra, site })))
+              .sort((a, b) => a.obra.name.localeCompare(b.obra.name, 'pt-BR'));
+            return (
+              <Card key={client.id} className="shadow-card">
+                <CardContent className="space-y-3 p-5">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <Building2 className="h-4 w-4 text-primary" />
+                      <h2 className="font-semibold">{client.name}</h2>
+                      <span className="text-xs text-muted-foreground">raiz CNPJ {client.cnpjRoot}</span>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        disabled={client.sites.length === 0}
+                        title={client.sites.length === 0 ? 'Cadastre um CNPJ primeiro' : undefined}
+                        onClick={() => setObraDialogClient(client)}
+                      >
+                        <Plus className="mr-1.5 h-3.5 w-3.5" /> Nova obra
+                      </Button>
+                      {client.sites.length === 0 && (
                         <Button
                           variant="ghost"
                           size="sm"
-                          onClick={() => setObraDialogSite(site)}
+                          title="Excluir cliente"
+                          onClick={() => handleDelete(`/clients/${client.id}`, `o cliente "${client.name}"`)}
                         >
-                          <Plus className="mr-1 h-3.5 w-3.5" /> Obra
+                          <Trash2 className="h-3.5 w-3.5 text-destructive" />
                         </Button>
-                      </div>
-
-                      <div className="mt-2 space-y-1.5 pl-6">
-                        {site.obras.length === 0 && (
-                          <p className="text-xs text-muted-foreground">Nenhuma obra neste estabelecimento.</p>
-                        )}
-                        {site.obras.map((obra) => (
-                          <div
-                            key={obra.id}
-                            className="flex items-center justify-between gap-2 rounded-md bg-muted/40 px-2.5 py-1.5"
-                          >
-                            <div className="flex min-w-0 items-center gap-1.5">
-                              <HardHat className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                              <span className="truncate text-sm">{obra.name}</span>
-                              {!obra.active && (
-                                <Badge variant="outline" className="shrink-0">
-                                  inativa
-                                </Badge>
-                              )}
-                            </div>
-                            <div className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
-                              <span className="tabular-nums">{obra._count.allocations} ativos</span>
-                              <Button variant="ghost" size="sm" onClick={() => setEditingObra(obra)}>
-                                <Pencil className="h-3.5 w-3.5" />
-                              </Button>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
+                      )}
                     </div>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-          ))}
+                  </div>
+
+                  {obras.length === 0 && (
+                    <p className="text-sm text-muted-foreground">Nenhuma obra cadastrada ainda.</p>
+                  )}
+
+                  <div className="space-y-1.5">
+                    {obras.map(({ obra, site }) => (
+                      <div
+                        key={obra.id}
+                        className="flex items-center justify-between gap-2 rounded-md border border-border px-3 py-2"
+                      >
+                        <div className="min-w-0">
+                          <div className="flex min-w-0 items-center gap-1.5">
+                            <HardHat className="h-4 w-4 shrink-0 text-primary" />
+                            <span className="truncate text-sm font-medium">{obra.name}</span>
+                            {!obra.active && (
+                              <Badge variant="outline" className="shrink-0">
+                                inativa
+                              </Badge>
+                            )}
+                          </div>
+                          <p className="truncate pl-5 text-xs text-muted-foreground">
+                            faturado no CNPJ {formatCnpj(site.cnpj)}
+                            {site.isHeadquarters ? ' (matriz)' : ''}
+                          </p>
+                          {(normalizeLabel(obra.costCenterLabel) !== normalizeLabel(obra.name) ||
+                            obra.aliases.length > 0) && (
+                            <p
+                              className="truncate pl-5 text-xs text-muted-foreground"
+                              title={[obra.costCenterLabel, ...obra.aliases].join(' · ')}
+                            >
+                              reconhece: {[obra.costCenterLabel, ...obra.aliases].join(' · ')}
+                            </p>
+                          )}
+                        </div>
+                        <div className="flex shrink-0 items-center gap-0.5 text-xs text-muted-foreground">
+                          <span className="mr-1 tabular-nums" title="Alocações (atuais e históricas)">
+                            {obra._count.allocations} aloc.
+                          </span>
+                          <Button variant="ghost" size="sm" title="Editar obra" onClick={() => setEditingObra(obra)}>
+                            <Pencil className="h-3.5 w-3.5" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            title="Mesclar em outra obra (duplicada)"
+                            onClick={() => setMergingObra({ obra, client })}
+                          >
+                            <Merge className="h-3.5 w-3.5" />
+                          </Button>
+                          {obra._count.allocations === 0 && obra._count.contracts === 0 && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              title="Excluir obra"
+                              onClick={() => handleDelete(`/clients/obras/${obra.id}`, `a obra "${obra.name}"`)}
+                            >
+                              <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <details className="rounded-md border border-dashed border-border px-3 py-2 text-sm">
+                    <summary className="cursor-pointer select-none text-xs font-medium text-muted-foreground">
+                      CNPJs de faturamento ({client.sites.length})
+                    </summary>
+                    <div className="mt-2 space-y-1.5">
+                      {client.sites.map((site) => (
+                        <div key={site.id} className="flex items-center justify-between gap-2">
+                          <div className="flex min-w-0 items-center gap-1.5">
+                            <MapPin className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                            <span className="truncate text-xs">
+                              {formatCnpj(site.cnpj)}
+                              {site.isHeadquarters ? ' · matriz' : ''}
+                              {site.addressCity
+                                ? ` · ${site.addressCity}${site.addressState ? '/' + site.addressState : ''}`
+                                : ''}
+                              {` · ${site.obras.length} obra(s)`}
+                            </span>
+                          </div>
+                          <div className="flex shrink-0 items-center gap-0.5">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              title="Editar CNPJ de faturamento"
+                              onClick={() => setEditingSite(site)}
+                            >
+                              <Pencil className="h-3.5 w-3.5" />
+                            </Button>
+                            {site.obras.length === 0 && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                title="Excluir CNPJ de faturamento"
+                                onClick={() =>
+                                  handleDelete(`/clients/sites/${site.id}`, `o CNPJ ${formatCnpj(site.cnpj)}`)
+                                }
+                              >
+                                <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          setSiteDialogClient(client);
+                          setSiteForm(emptySiteForm);
+                          setSiteFormError(null);
+                        }}
+                      >
+                        <Plus className="mr-1.5 h-3.5 w-3.5" /> Novo CNPJ de faturamento
+                      </Button>
+                    </div>
+                  </details>
+                </CardContent>
+              </Card>
+            );
+          })}
         </div>
       </main>
 
@@ -330,18 +442,18 @@ export default function ClientesPage() {
         <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle>
-              Novo estabelecimento {siteDialogClient ? `— ${siteDialogClient.name}` : ''}
+              Novo CNPJ de faturamento {siteDialogClient ? `— ${siteDialogClient.name}` : ''}
             </DialogTitle>
           </DialogHeader>
           <form onSubmit={handleCreateSite} className="space-y-4">
             {siteFormError && <Alert variant="destructive">{siteFormError}</Alert>}
             <div className="grid grid-cols-2 gap-3">
               <div className="col-span-2 space-y-1.5">
-                <Label htmlFor="siteName">Nome do estabelecimento</Label>
+                <Label htmlFor="siteName">Nome interno</Label>
                 <Input
                   id="siteName"
                   required
-                  placeholder="DOISA FILIAL GO"
+                  placeholder="DOISA - Filial GO"
                   value={siteForm.name}
                   onChange={(e) => setSiteForm({ ...siteForm, name: e.target.value })}
                 />
@@ -435,10 +547,10 @@ export default function ClientesPage() {
       </Dialog>
 
       <ObraDialog
-        site={obraDialogSite}
-        onClose={() => setObraDialogSite(null)}
+        client={obraDialogClient}
+        onClose={() => setObraDialogClient(null)}
         onSaved={() => {
-          setObraDialogSite(null);
+          setObraDialogClient(null);
           loadClients();
         }}
       />
@@ -450,24 +562,41 @@ export default function ClientesPage() {
           loadClients();
         }}
       />
+      <EditSiteDialog
+        site={editingSite}
+        onClose={() => setEditingSite(null)}
+        onSaved={() => {
+          setEditingSite(null);
+          loadClients();
+        }}
+      />
+      <MergeObraDialog
+        target={mergingObra}
+        onClose={() => setMergingObra(null)}
+        onSaved={() => {
+          setMergingObra(null);
+          loadClients();
+        }}
+      />
     </>
   );
 }
 
-/** Cria (recebe `site`) ou edita (recebe `obra`) uma obra. */
+/** Cria (recebe `client` — escolhe o CNPJ de faturamento) ou edita (recebe `obra`) uma obra. */
 function ObraDialog({
-  site,
+  client,
   obra,
   onClose,
   onSaved,
 }: {
-  site?: Site | null;
+  client?: ClientWithSites | null;
   obra?: Obra | null;
   onClose: () => void;
   onSaved: () => void;
 }) {
   const isEdit = !!obra;
-  const open = !!site || !!obra;
+  const open = !!client || !!obra;
+  const [siteId, setSiteId] = React.useState('');
 
   const [name, setName] = React.useState('');
   const [label, setLabel] = React.useState('');
@@ -485,8 +614,10 @@ function ObraDialog({
       setLabel('');
       setActive(true);
     }
+    const sites = client?.sites ?? [];
+    setSiteId(sites.length === 1 ? sites[0].id : '');
     setError(null);
-  }, [obra, site]);
+  }, [obra, client]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -498,15 +629,16 @@ function ObraDialog({
           method: 'PATCH',
           body: JSON.stringify({ name, costCenterLabel: label, active }),
         });
-      } else if (site) {
-        await apiFetch(`/clients/sites/${site.id}/obras`, {
+      } else if (client) {
+        if (!siteId) throw new Error('Escolha o CNPJ em que a locadora fatura esta obra.');
+        await apiFetch(`/clients/sites/${siteId}/obras`, {
           method: 'POST',
           body: JSON.stringify({ name, costCenterLabel: label }),
         });
       }
       onSaved();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Não foi possível salvar a obra.');
+      setError(err instanceof ApiError || err instanceof Error ? err.message : 'Não foi possível salvar a obra.');
     } finally {
       setSubmitting(false);
     }
@@ -517,7 +649,7 @@ function ObraDialog({
       <DialogContent>
         <DialogHeader>
           <DialogTitle>
-            {isEdit ? `Editar obra — ${obra?.name}` : `Nova obra${site ? ` — ${site.name}` : ''}`}
+            {isEdit ? `Editar obra — ${obra?.name}` : `Nova obra${client ? ` — ${client.name}` : ''}`}
           </DialogTitle>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -546,6 +678,21 @@ function ObraDialog({
               Só mude se souber o valor exato.
             </p>
           </div>
+          {!isEdit && client && (
+            <div className="space-y-1.5">
+              <Label htmlFor="obra-site">CNPJ de faturamento</Label>
+              <Select id="obra-site" required value={siteId} onChange={(e) => setSiteId(e.target.value)}>
+                <option value="">Selecione...</option>
+                {client.sites.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {formatCnpj(s.cnpj)}
+                    {s.isHeadquarters ? ' (matriz)' : ''}
+                    {s.addressState ? ` · ${s.addressState}` : ''}
+                  </option>
+                ))}
+              </Select>
+            </div>
+          )}
           {isEdit && (
             <label className="flex items-center gap-2 text-sm">
               <input
@@ -560,6 +707,253 @@ function ObraDialog({
           <DialogFooter>
             <Button type="submit" disabled={submitting}>
               {submitting ? 'Salvando...' : 'Salvar'}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** Edita nome/matriz/endereço/contato de um estabelecimento. O CNPJ não muda — é a chave do extrato. */
+function EditSiteDialog({ site, onClose, onSaved }: { site: Site | null; onClose: () => void; onSaved: () => void }) {
+  const [form, setForm] = React.useState(emptySiteForm);
+  const [error, setError] = React.useState<string | null>(null);
+  const [submitting, setSubmitting] = React.useState(false);
+
+  React.useEffect(() => {
+    if (!site) return;
+    setForm({
+      name: site.name,
+      costCenterLabel: site.costCenterLabel ?? '',
+      cnpj: site.cnpj,
+      isHeadquarters: site.isHeadquarters,
+      addressStreet: site.addressStreet ?? '',
+      addressNumber: site.addressNumber ?? '',
+      addressCity: site.addressCity ?? '',
+      addressState: site.addressState ?? '',
+      contactName: site.contactName ?? '',
+      contactPhone: site.contactPhone ?? '',
+      contactEmail: site.contactEmail ?? '',
+    });
+    setError(null);
+  }, [site]);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!site) return;
+    setError(null);
+    setSubmitting(true);
+    try {
+      await apiFetch(`/clients/sites/${site.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          name: form.name,
+          isHeadquarters: form.isHeadquarters,
+          addressStreet: form.addressStreet || undefined,
+          addressNumber: form.addressNumber || undefined,
+          addressCity: form.addressCity || undefined,
+          addressState: form.addressState || undefined,
+          contactName: form.contactName || undefined,
+          contactPhone: form.contactPhone || undefined,
+          contactEmail: form.contactEmail || undefined,
+        }),
+      });
+      onSaved();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Não foi possível salvar o estabelecimento.');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <Dialog open={!!site} onOpenChange={(v) => !v && onClose()}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Editar CNPJ de faturamento — {site ? formatCnpj(site.cnpj) : ''}</DialogTitle>
+        </DialogHeader>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          {error && <Alert variant="destructive">{error}</Alert>}
+          <div className="grid grid-cols-2 gap-3">
+            <div className="col-span-2 space-y-1.5">
+              <Label htmlFor="editSiteName">Nome interno (aparece pouco)</Label>
+              <Input
+                id="editSiteName"
+                required
+                placeholder="DOISA - Filial Ceará"
+                value={form.name}
+                onChange={(e) => setForm({ ...form, name: e.target.value })}
+              />
+              <p className="text-xs text-muted-foreground">
+                O controle é pela obra — este nome só identifica o CNPJ onde a locadora fatura.
+              </p>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="editSiteCity">Cidade</Label>
+              <Input
+                id="editSiteCity"
+                value={form.addressCity}
+                onChange={(e) => setForm({ ...form, addressCity: e.target.value })}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="editSiteState">UF</Label>
+              <Input
+                id="editSiteState"
+                maxLength={2}
+                value={form.addressState}
+                onChange={(e) => setForm({ ...form, addressState: e.target.value.toUpperCase() })}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="editSiteStreet">Endereço</Label>
+              <Input
+                id="editSiteStreet"
+                value={form.addressStreet}
+                onChange={(e) => setForm({ ...form, addressStreet: e.target.value })}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="editSiteNumber">Número</Label>
+              <Input
+                id="editSiteNumber"
+                value={form.addressNumber}
+                onChange={(e) => setForm({ ...form, addressNumber: e.target.value })}
+              />
+            </div>
+            <div className="col-span-2 space-y-1.5">
+              <Label htmlFor="editSiteContact">Contato local (opcional)</Label>
+              <Input
+                id="editSiteContact"
+                value={form.contactName}
+                onChange={(e) => setForm({ ...form, contactName: e.target.value })}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="editSitePhone">Telefone</Label>
+              <Input
+                id="editSitePhone"
+                value={form.contactPhone}
+                onChange={(e) => setForm({ ...form, contactPhone: e.target.value })}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="editSiteEmail">E-mail</Label>
+              <Input
+                id="editSiteEmail"
+                type="email"
+                value={form.contactEmail}
+                onChange={(e) => setForm({ ...form, contactEmail: e.target.value })}
+              />
+            </div>
+          </div>
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={form.isHeadquarters}
+              onChange={(e) => setForm({ ...form, isHeadquarters: e.target.checked })}
+              className="h-4 w-4 rounded border-border"
+            />
+            Este é a matriz/sede do cliente
+          </label>
+          <DialogFooter>
+            <Button type="submit" disabled={submitting}>
+              {submitting ? 'Salvando...' : 'Salvar'}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/**
+ * Mescla uma obra duplicada em outra do mesmo cliente: todos os ativos
+ * (alocações atuais e históricas) e contratos vão para a obra escolhida, a
+ * classificação da duplicada vira apelido da escolhida (a próxima
+ * importação já cai nela) e a duplicada é excluída.
+ */
+function MergeObraDialog({
+  target,
+  onClose,
+  onSaved,
+}: {
+  target: { obra: Obra; client: ClientWithSites } | null;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [destinationId, setDestinationId] = React.useState('');
+  const [error, setError] = React.useState<string | null>(null);
+  const [submitting, setSubmitting] = React.useState(false);
+
+  React.useEffect(() => {
+    setDestinationId('');
+    setError(null);
+  }, [target]);
+
+  const options = React.useMemo(
+    () =>
+      target
+        ? target.client.sites.flatMap((site) =>
+            site.obras.filter((o) => o.id !== target.obra.id).map((o) => ({ obra: o, site })),
+          )
+        : [],
+    [target],
+  );
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!target || !destinationId) return;
+    setError(null);
+    setSubmitting(true);
+    try {
+      await apiFetch(`/clients/obras/${target.obra.id}/merge`, {
+        method: 'POST',
+        body: JSON.stringify({ targetObraId: destinationId }),
+      });
+      onSaved();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Não foi possível mesclar as obras.');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <Dialog open={!!target} onOpenChange={(v) => !v && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Mesclar obra — {target?.obra.name}</DialogTitle>
+        </DialogHeader>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          {error && <Alert variant="destructive">{error}</Alert>}
+          <p className="text-sm text-muted-foreground">
+            Use quando esta obra é uma <strong>duplicata</strong> de outra. Os{' '}
+            <strong>{target?.obra._count.allocations ?? 0} registro(s) de alocação</strong> e{' '}
+            <strong>{target?.obra._count.contracts ?? 0} contrato(s)</strong> dela passam para a obra escolhida abaixo,
+            a classificação &quot;{target?.obra.costCenterLabel}&quot; passa a ser reconhecida pela obra escolhida (a
+            próxima importação já cai nela) e esta obra é excluída.
+          </p>
+          <div className="space-y-1.5">
+            <Label htmlFor="mergeDestination">Obra que vai ficar</Label>
+            <Select
+              id="mergeDestination"
+              required
+              value={destinationId}
+              onChange={(e) => setDestinationId(e.target.value)}
+            >
+              <option value="">Selecione...</option>
+              {options.map(({ obra, site }) => (
+                <option key={obra.id} value={obra.id}>
+                  {obra.name} — CNPJ {formatCnpj(site.cnpj)} ({obra._count.allocations} aloc.)
+                </option>
+              ))}
+            </Select>
+          </div>
+          <DialogFooter>
+            <Button type="submit" disabled={submitting || !destinationId}>
+              {submitting ? 'Mesclando...' : 'Mesclar'}
             </Button>
           </DialogFooter>
         </form>

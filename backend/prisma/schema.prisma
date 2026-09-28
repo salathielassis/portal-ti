@@ -114,12 +114,18 @@ model Site {
 // daquele estado. Por isso Obra fica ABAIXO de Site (o estabelecimento com
 // CNPJ), e não é o Site que carrega a classificação.
 model Obra {
-  id              String  @id @default(uuid())
-  site            Site    @relation(fields: [siteId], references: [id])
+  id              String   @id @default(uuid())
+  site            Site     @relation(fields: [siteId], references: [id])
   siteId          String
   name            String // legível, ex.: "Barro Alto GO"
   costCenterLabel String // campo "CLASSIFICAÇÃO" do extrato — chave natural dentro do Site
-  active          Boolean @default(true)
+  // Outras grafias da CLASSIFICAÇÃO/nome de local que também apontam para
+  // esta obra (ex.: o extrato diz "EQUIP - IBIAPABA" e a guia de entrega
+  // "IBIAPABA - SEDE"). Preenchido quando o usuário escolhe, na importação,
+  // uma obra existente para um rótulo diferente, ou ao mesclar obras — é o
+  // que impede a próxima importação de criar a obra duplicada de novo.
+  aliases         String[] @default([])
+  active          Boolean  @default(true)
 
   allocations AssetAllocation[]
   contracts   Contract[]

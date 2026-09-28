@@ -4,6 +4,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { EquipmentPricingService } from '../equipment-pricing/equipment-pricing.service';
 import { StorageService } from '../../common/storage/storage.service';
 import { CreateAssetDto } from './dto/create-asset.dto';
+import { normalizeAssetTag, normalizeSerial } from '../../common/utils/asset-identifiers';
 import { UpdateAssetDto } from './dto/update-asset.dto';
 import {
   AllocateAssetDto,
@@ -29,6 +30,11 @@ interface FindAllFilters {
   search?: string;
 }
 
+/** Responsável é opcional em toda a tela de ativos — em branco é gravado como "Não informado". */
+function normalizeAssignee(name: string | null | undefined): string {
+  return name?.trim() || 'Não informado';
+}
+
 @Injectable()
 export class AssetsService {
   constructor(
@@ -37,22 +43,51 @@ export class AssetsService {
     private readonly storage: StorageService,
   ) {}
 
-  async create(dto: CreateAssetDto) {
+  async create(dto: CreateAssetDto, userId?: string) {
     if (dto.ownership === AssetOwnership.LOCADO && !dto.contractId) {
       throw new BadRequestException('Ativos locados precisam informar o contrato de origem');
     }
 
-    const duplicateTag = await this.prisma.asset.findUnique({ where: { assetTag: dto.assetTag } });
-    if (duplicateTag) throw new ConflictException('Já existe um ativo com essa tag de patrimônio');
+    dto.assetTag = normalizeAssetTag(dto.assetTag);
+    dto.serialNumber = normalizeSerial(dto.serialNumber);
+    if (!dto.assetTag || !dto.serialNumber) {
+      throw new BadRequestException('Informe o patrimônio (tombo) e o número de série.');
+    }
+    await this.assertUniqueIdentifiers(dto.assetTag, dto.serialNumber);
 
-    const duplicateSerial = await this.prisma.asset.findUnique({
-      where: { serialNumber: dto.serialNumber },
-    });
-    if (duplicateSerial) throw new ConflictException('Já existe um ativo com esse número de série');
-
+    const { obraId, assignedToName, ...assetData } = dto;
+    const siteId = await this.resolveSiteFromObra(obraId);
     const tier = await this.equipmentPricing.classify(`${dto.brand} ${dto.model}`);
 
-    return this.prisma.asset.create({ data: { ...(dto as any), priceTierId: tier?.id ?? null } });
+    const asset = await this.prisma.asset.create({
+      data: {
+        ...(assetData as any),
+        priceTierId: tier?.id ?? null,
+        ...(obraId && { status: AssetStatus.EM_USO }),
+      },
+    });
+
+    // Cadastro já com o local onde o equipamento está: nasce alocado na
+    // obra/filial, com responsável opcional — nem sempre se sabe quem ficou
+    // com ele, e isso não pode travar o cadastro.
+    if (obraId) {
+      const name = normalizeAssignee(assignedToName);
+      await this.prisma.assetAllocation.create({
+        data: { assetId: asset.id, assignedToName: name, siteId, obraId, deliveryDate: new Date(), allocatedById: userId },
+      });
+      await this.prisma.assetMovement.create({
+        data: {
+          assetId: asset.id,
+          type: MovementType.ENTREGA,
+          fromStatus: null,
+          toStatus: AssetStatus.EM_USO,
+          loggedById: userId,
+          description: `Cadastrado já alocado — responsável: ${name}`,
+        },
+      });
+    }
+
+    return asset;
   }
 
   async findAll(filters: FindAllFilters) {
@@ -93,8 +128,8 @@ export class AssetsService {
 
   /** Busca exata por nº de série — usado pela leitura de código de barras (bipador), que lê o mesmo nº de série já impresso pelo fabricante embaixo do equipamento. */
   async findBySerial(serialNumber: string) {
-    const asset = await this.prisma.asset.findUnique({
-      where: { serialNumber },
+    const asset = await this.prisma.asset.findFirst({
+      where: { serialNumber: { equals: normalizeSerial(serialNumber), mode: 'insensitive' } },
       include: {
         supplier: true,
         contract: true,
@@ -132,16 +167,12 @@ export class AssetsService {
   async update(id: string, dto: UpdateAssetDto) {
     const current = await this.findOne(id);
 
-    if (dto.assetTag && dto.assetTag !== current.assetTag) {
-      const duplicateTag = await this.prisma.asset.findUnique({ where: { assetTag: dto.assetTag } });
-      if (duplicateTag) throw new ConflictException('Já existe um ativo com essa tag de patrimônio');
+    if (dto.assetTag !== undefined) dto.assetTag = normalizeAssetTag(dto.assetTag);
+    if (dto.serialNumber !== undefined) dto.serialNumber = normalizeSerial(dto.serialNumber);
+    if (dto.assetTag === '' || dto.serialNumber === '') {
+      throw new BadRequestException('Patrimônio (tombo) e número de série não podem ficar vazios.');
     }
-    if (dto.serialNumber && dto.serialNumber !== current.serialNumber) {
-      const duplicateSerial = await this.prisma.asset.findUnique({
-        where: { serialNumber: dto.serialNumber },
-      });
-      if (duplicateSerial) throw new ConflictException('Já existe um ativo com esse número de série');
-    }
+    await this.assertUniqueIdentifiers(dto.assetTag, dto.serialNumber, id);
 
     const ownership = dto.ownership ?? current.ownership;
     const contractId = dto.contractId !== undefined ? dto.contractId : current.contractId;
@@ -157,6 +188,29 @@ export class AssetsService {
       priceTierId = tier?.id ?? null;
     }
     return this.prisma.asset.update({ where: { id }, data: { ...(dto as any), priceTierId } });
+  }
+
+  /**
+   * Tombo e nº de série são únicos ignorando maiúsculas/espaços — o índice
+   * único do banco só pega repetição exata, e cadastros antigos podem não
+   * estar normalizados.
+   */
+  private async assertUniqueIdentifiers(assetTag?: string, serialNumber?: string, excludeId?: string) {
+    const notSelf = excludeId ? { id: { not: excludeId } } : {};
+    if (assetTag) {
+      const dup = await this.prisma.asset.findFirst({
+        where: { ...notSelf, assetTag: { equals: assetTag, mode: 'insensitive' } },
+      });
+      if (dup) throw new ConflictException(`Já existe um ativo com o patrimônio ${dup.assetTag}`);
+    }
+    if (serialNumber) {
+      const dup = await this.prisma.asset.findFirst({
+        where: { ...notSelf, serialNumber: { equals: serialNumber, mode: 'insensitive' } },
+      });
+      if (dup) {
+        throw new ConflictException(`Já existe um ativo com o número de série ${dup.serialNumber} (patrimônio ${dup.assetTag})`);
+      }
+    }
   }
 
   async remove(id: string) {
@@ -196,6 +250,7 @@ export class AssetsService {
     }
 
     const siteId = await this.resolveSiteFromObra(dto.obraId, dto.siteId);
+    const assignedToName = normalizeAssignee(dto.assignedToName);
 
     // Sequência simples (sem `$transaction` interativa): contra um banco
     // serverless com pooler (ex.: Neon), uma transação interativa pode
@@ -206,7 +261,7 @@ export class AssetsService {
     const allocation = await this.prisma.assetAllocation.create({
       data: {
         assetId,
-        assignedToName: dto.assignedToName,
+        assignedToName,
         cpf: dto.cpf,
         siteId,
         obraId: dto.obraId,
@@ -225,7 +280,7 @@ export class AssetsService {
         fromStatus: asset.status,
         toStatus: AssetStatus.EM_USO,
         loggedById: userId,
-        description: `Entregue para ${dto.assignedToName}`,
+        description: `Entregue para ${assignedToName}`,
       },
     });
 
@@ -255,7 +310,7 @@ export class AssetsService {
         'Este ativo não possui uma alocação ativa — use "Alocar" para atribuir um responsável.',
       );
     }
-    const assignedToName = dto.assignedToName.trim() || 'Não informado';
+    const assignedToName = normalizeAssignee(dto.assignedToName);
     return this.prisma.assetAllocation.update({
       where: { id: activeAllocation.id },
       data: { assignedToName },
@@ -381,6 +436,7 @@ export class AssetsService {
     });
 
     const siteId = await this.resolveSiteFromObra(dto.obraId, dto.siteId);
+    const assignedToName = normalizeAssignee(dto.assignedToName);
 
     // Sequência simples (sem `$transaction` interativa) — ver nota em `allocate()`.
     if (activeAllocation) {
@@ -393,7 +449,7 @@ export class AssetsService {
     const newAllocation = await this.prisma.assetAllocation.create({
       data: {
         assetId,
-        assignedToName: dto.assignedToName,
+        assignedToName,
         cpf: dto.cpf,
         siteId,
         obraId: dto.obraId,
@@ -408,6 +464,7 @@ export class AssetsService {
     const fromLabel = activeAllocation
       ? activeAllocation.obra?.name ?? activeAllocation.site?.name ?? activeAllocation.assignedToName
       : 'estoque';
+    const newObra = dto.obraId ? await this.prisma.obra.findUnique({ where: { id: dto.obraId } }) : null;
     await this.prisma.assetMovement.create({
       data: {
         assetId,
@@ -415,7 +472,7 @@ export class AssetsService {
         fromStatus: asset.status,
         toStatus: AssetStatus.EM_USO,
         loggedById: userId,
-        description: `Transferido de ${fromLabel} para ${dto.assignedToName}`,
+        description: `Transferido de ${fromLabel} para ${newObra?.name ? `${newObra.name} (${assignedToName})` : assignedToName}`,
       },
     });
 

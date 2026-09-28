@@ -2,9 +2,13 @@ import { ApiProperty } from '@nestjs/swagger';
 import { IsDateString, IsOptional, IsString, IsUUID } from 'class-validator';
 
 export class AllocateAssetDto {
-  @ApiProperty({ description: 'Nome do colaborador ou cliente que vai receber o ativo' })
+  @ApiProperty({
+    required: false,
+    description: 'Nome do colaborador ou cliente que vai receber o ativo — em branco vira "Não informado"',
+  })
+  @IsOptional()
   @IsString()
-  assignedToName: string;
+  assignedToName?: string;
 
   @ApiProperty({ required: false, description: 'CPF do colaborador — opcional, usado no termo de responsabilidade em PDF' })
   @IsOptional()
@@ -69,9 +73,13 @@ export class ReturnAssetDto {
  * pessoas/departamentos sem precisar de duas chamadas separadas.
  */
 export class TransferAssetDto {
-  @ApiProperty({ description: 'Nome do colaborador ou cliente que vai passar a ficar com o ativo' })
+  @ApiProperty({
+    required: false,
+    description: 'Nome do colaborador ou cliente que vai passar a ficar com o ativo — em branco vira "Não informado"',
+  })
+  @IsOptional()
   @IsString()
-  assignedToName: string;
+  assignedToName?: string;
 
   @ApiProperty({ required: false, description: 'CPF do colaborador — opcional, usado no termo de responsabilidade em PDF' })
   @IsOptional()

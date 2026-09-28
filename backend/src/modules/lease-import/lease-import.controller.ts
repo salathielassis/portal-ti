@@ -1,11 +1,22 @@
-import { Controller, Post, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
+import { Body, Controller, Post, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiBearerAuth, ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
 import { LeaseImportService } from './lease-import.service';
+import { LeaseImportOptions } from './lease-import.types';
+import { LeaseImportOptionsDto } from './dto/lease-import-options.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
+
+function toOptions(body: LeaseImportOptionsDto | undefined): LeaseImportOptions {
+  return {
+    obraId: body?.obraId?.trim() || undefined,
+    newObraName: body?.newObraName?.trim() || undefined,
+    moveFromOtherObras: body?.moveFromOtherObras === 'true',
+    forceNewObra: body?.forceNewObra === 'true',
+  };
+}
 
 @ApiTags('Importação de Extrato de Locação')
 @ApiBearerAuth()
@@ -24,22 +35,22 @@ export class LeaseImportController {
   @ApiOperation({ summary: 'Lê um extrato de locação em PDF e retorna uma prévia (sem gravar no banco)' })
   @ApiConsumes('multipart/form-data')
   @UseInterceptors(FileInterceptor('file'))
-  async preview(@UploadedFile() file: Express.Multer.File) {
-    return this.leaseImportService.preview(file);
+  async preview(@UploadedFile() file: Express.Multer.File, @Body() body: LeaseImportOptionsDto) {
+    return this.leaseImportService.preview(file, toOptions(body));
   }
 
   /**
    * Passo 2: reprocessa o mesmo PDF e executa a cascata de upserts
-   * (Cliente → Site → Fornecedor → Contrato → Fatura → Ativos → Alocações)
-   * em uma única transação. Idempotente: reenviar o mesmo extrato atualiza
-   * em vez de duplicar.
+   * (Cliente → Site → Obra → Fornecedor → Contrato → Fatura → Ativos →
+   * Alocações) na obra escolhida na prévia. Idempotente: reenviar o mesmo
+   * extrato atualiza em vez de duplicar.
    */
   @Post('execute')
   @Roles(UserRole.ADMIN, UserRole.FINANCEIRO)
   @ApiOperation({ summary: 'Confirma a importação: grava Cliente/Site/Fornecedor/Contrato/Fatura/Ativos no banco' })
   @ApiConsumes('multipart/form-data')
   @UseInterceptors(FileInterceptor('file'))
-  async execute(@UploadedFile() file: Express.Multer.File) {
-    return this.leaseImportService.execute(file);
+  async execute(@UploadedFile() file: Express.Multer.File, @Body() body: LeaseImportOptionsDto) {
+    return this.leaseImportService.execute(file, toOptions(body));
   }
 }

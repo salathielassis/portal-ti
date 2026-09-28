@@ -83,6 +83,9 @@ interface AssetSpecs {
   cpu?: string;
   ram?: string;
   storage?: string;
+  gpu?: string;
+  /** Descrição original da locadora (importação) — só consulta. */
+  raw?: string;
 }
 
 interface Asset {
@@ -151,7 +154,10 @@ const emptyForm = {
   cpu: '',
   ram: '',
   storage: '',
+  gpu: '',
   contractId: '',
+  obraId: '',
+  assignedToName: '',
 };
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -232,17 +238,35 @@ function formatDateTime(value: string) {
   return new Date(value).toLocaleString('pt-BR');
 }
 
-function specsSummary(specs: AssetSpecs | null): string {
-  if (!specs) return '';
-  return [specs.cpu, specs.ram, specs.storage].map((s) => s?.trim()).filter(Boolean).join(' · ');
+/**
+ * Rótulo da obra nos seletores: só o nome (o controle é pela obra). O CNPJ
+ * de faturamento só aparece quando duas obras têm o mesmo nome.
+ */
+function obraLabel(obra: Obra, all: Obra[]): string {
+  const sameName = all.filter((o) => o.name.trim().toUpperCase() === obra.name.trim().toUpperCase()).length > 1;
+  return sameName ? `${obra.name} — CNPJ ${obra.site.cnpj}` : obra.name;
 }
 
-/** Monta o objeto `specs` para envio — só inclui as chaves preenchidas. */
-function buildSpecs(form: { cpu: string; ram: string; storage: string }): AssetSpecs | undefined {
-  const specs: AssetSpecs = {};
+function specsSummary(specs: AssetSpecs | null): string {
+  if (!specs) return '';
+  return [specs.cpu, specs.ram, specs.storage, specs.gpu].map((s) => s?.trim()).filter(Boolean).join(' · ');
+}
+
+/**
+ * Monta o objeto `specs` para envio — só inclui as chaves preenchidas, mas
+ * preserva as chaves que a tela não edita (ex.: `raw`, a descrição original
+ * da locadora vinda da importação).
+ */
+function buildSpecs(
+  form: { cpu: string; ram: string; storage: string; gpu: string },
+  current?: AssetSpecs | null,
+): AssetSpecs | undefined {
+  const { cpu: _cpu, ram: _ram, storage: _storage, gpu: _gpu, ...others } = current ?? {};
+  const specs: AssetSpecs = { ...others };
   if (form.cpu.trim()) specs.cpu = form.cpu.trim();
   if (form.ram.trim()) specs.ram = form.ram.trim();
   if (form.storage.trim()) specs.storage = form.storage.trim();
+  if (form.gpu.trim()) specs.gpu = form.gpu.trim();
   return Object.keys(specs).length ? specs : undefined;
 }
 
@@ -416,6 +440,8 @@ export default function AtivosPage() {
           model: form.model,
           specs: buildSpecs(form),
           contractId: form.ownership === 'LOCADO' ? form.contractId : undefined,
+          obraId: form.obraId || undefined,
+          assignedToName: form.obraId ? form.assignedToName.trim() || undefined : undefined,
         }),
       });
       setForm(emptyForm);
@@ -440,7 +466,10 @@ export default function AtivosPage() {
       cpu: asset.specs?.cpu ?? '',
       ram: asset.specs?.ram ?? '',
       storage: asset.specs?.storage ?? '',
+      gpu: asset.specs?.gpu ?? '',
       contractId: asset.contract?.id ?? '',
+      obraId: '',
+      assignedToName: '',
     });
     setEditError(null);
   }
@@ -463,7 +492,7 @@ export default function AtivosPage() {
           ownership: editForm.ownership,
           brand: editForm.brand,
           model: editForm.model,
-          specs: buildSpecs(editForm) ?? {},
+          specs: buildSpecs(editForm, editingAsset.specs) ?? {},
           contractId: editForm.ownership === 'LOCADO' ? editForm.contractId : null,
         }),
       });
@@ -486,7 +515,7 @@ export default function AtivosPage() {
       await apiFetch(`/assets/${allocatingAsset.id}/allocate`, {
         method: 'POST',
         body: JSON.stringify({
-          assignedToName: allocateForm.assignedToName,
+          assignedToName: allocateForm.assignedToName.trim() || undefined,
           cpf: allocateForm.cpf.trim() || undefined,
           obraId: allocateForm.obraId || undefined,
           deliveryDate: allocateForm.deliveryDate,
@@ -552,7 +581,7 @@ export default function AtivosPage() {
       await apiFetch(`/assets/${transferringAsset.id}/transfer`, {
         method: 'POST',
         body: JSON.stringify({
-          assignedToName: transferForm.assignedToName.trim(),
+          assignedToName: transferForm.assignedToName.trim() || undefined,
           cpf: transferForm.cpf.trim() || undefined,
           obraId: transferForm.obraId || undefined,
           transferDate: transferForm.transferDate,
@@ -855,6 +884,15 @@ export default function AtivosPage() {
                       onChange={(e) => setForm({ ...form, storage: e.target.value })}
                     />
                   </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="gpu">Placa de vídeo</Label>
+                    <Input
+                      id="gpu"
+                      placeholder="RTX 3050 4GB (vazio = integrada)"
+                      value={form.gpu}
+                      onChange={(e) => setForm({ ...form, gpu: e.target.value })}
+                    />
+                  </div>
                   {form.ownership === 'LOCADO' && (
                     <div className="col-span-2 space-y-1.5">
                       <Label htmlFor="contractId">Contrato de origem</Label>
@@ -871,6 +909,32 @@ export default function AtivosPage() {
                           </option>
                         ))}
                       </Select>
+                    </div>
+                  )}
+                  <div className="col-span-2 space-y-1.5">
+                    <Label htmlFor="createObraId">Onde está hoje (opcional)</Label>
+                    <Select
+                      id="createObraId"
+                      value={form.obraId}
+                      onChange={(e) => setForm({ ...form, obraId: e.target.value })}
+                    >
+                      <option value="">Estoque (sem obra/filial)</option>
+                      {obras.map((o) => (
+                        <option key={o.id} value={o.id}>
+                          {obraLabel(o, obras)}
+                        </option>
+                      ))}
+                    </Select>
+                  </div>
+                  {form.obraId && (
+                    <div className="col-span-2 space-y-1.5">
+                      <Label htmlFor="createAssignedTo">Responsável (opcional)</Label>
+                      <Input
+                        id="createAssignedTo"
+                        placeholder="Deixe em branco se não souber — fica como “Não informado”"
+                        value={form.assignedToName}
+                        onChange={(e) => setForm({ ...form, assignedToName: e.target.value })}
+                      />
                     </div>
                   )}
                 </div>
@@ -939,7 +1003,7 @@ export default function AtivosPage() {
             <option value="">Todas as obras</option>
             {obras.map((o) => (
               <option key={o.id} value={o.id}>
-                {o.site.name} · {o.name}
+                {obraLabel(o, obras)}
               </option>
             ))}
           </Select>
@@ -1248,6 +1312,20 @@ export default function AtivosPage() {
                   onChange={(e) => setEditForm({ ...editForm, storage: e.target.value })}
                 />
               </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="editGpu">Placa de vídeo</Label>
+                <Input
+                  id="editGpu"
+                  placeholder="RTX 3050 4GB (vazio = integrada)"
+                  value={editForm.gpu}
+                  onChange={(e) => setEditForm({ ...editForm, gpu: e.target.value })}
+                />
+              </div>
+              {editingAsset?.specs?.raw && (
+                <p className="col-span-2 text-xs text-muted-foreground">
+                  Descrição original da locadora: <span className="font-mono">{editingAsset.specs.raw}</span>
+                </p>
+              )}
               {editForm.ownership === 'LOCADO' && (
                 <div className="col-span-2 space-y-1.5">
                   <Label htmlFor="editContractId">Contrato de origem</Label>
@@ -1292,11 +1370,10 @@ export default function AtivosPage() {
               </p>
             )}
             <div className="space-y-1.5">
-              <Label htmlFor="assignedToName">Entregar para</Label>
+              <Label htmlFor="assignedToName">Entregar para (opcional)</Label>
               <Input
                 id="assignedToName"
-                required
-                placeholder="Nome do colaborador ou cliente"
+                placeholder="Nome do colaborador — em branco fica “Não informado”"
                 value={allocateForm.assignedToName}
                 onChange={(e) => setAllocateForm({ ...allocateForm, assignedToName: e.target.value })}
               />
@@ -1320,7 +1397,7 @@ export default function AtivosPage() {
                 <option value="">Sem obra (uso interno)</option>
                 {obras.map((o) => (
                   <option key={o.id} value={o.id}>
-                    {o.site.name} · {o.name}
+                    {obraLabel(o, obras)}
                   </option>
                 ))}
               </Select>
@@ -1387,11 +1464,10 @@ export default function AtivosPage() {
               <strong>Devolver para estoque</strong> no menu do ativo.
             </p>
             <div className="space-y-1.5">
-              <Label htmlFor="transferAssignedTo">Novo responsável</Label>
+              <Label htmlFor="transferAssignedTo">Novo responsável (opcional)</Label>
               <Input
                 id="transferAssignedTo"
-                required
-                placeholder="Nome do colaborador ou cliente"
+                placeholder="Nome do colaborador — em branco fica “Não informado”"
                 value={transferForm.assignedToName}
                 onChange={(e) => setTransferForm({ ...transferForm, assignedToName: e.target.value })}
               />
@@ -1415,7 +1491,7 @@ export default function AtivosPage() {
                 <option value="">Sem obra (uso interno)</option>
                 {obras.map((o) => (
                   <option key={o.id} value={o.id}>
-                    {o.site.name} · {o.name}
+                    {obraLabel(o, obras)}
                   </option>
                 ))}
               </Select>
@@ -1709,6 +1785,12 @@ export default function AtivosPage() {
                   <div>
                     <p className="text-muted-foreground">Armazenamento</p>
                     <p className="font-medium">{historyAsset.specs.storage}</p>
+                  </div>
+                )}
+                {historyAsset.specs?.gpu && (
+                  <div>
+                    <p className="text-muted-foreground">Placa de vídeo</p>
+                    <p className="font-medium">{historyAsset.specs.gpu}</p>
                   </div>
                 )}
               </div>
