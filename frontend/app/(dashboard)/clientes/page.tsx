@@ -1,7 +1,7 @@
 'use client';
 
 import * as React from 'react';
-import { Building2, MapPin, Merge, Pencil, Plus, HardHat, Trash2 } from 'lucide-react';
+import { AlertTriangle, Building2, MapPin, Pencil, Plus, HardHat, Trash2 } from 'lucide-react';
 import { Header } from '@/components/layout/header';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -60,6 +60,36 @@ function formatCnpj(cnpj: string) {
   return d.length === 14 ? d.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5') : cnpj;
 }
 
+/** Palavras genéricas que não identificam a obra ("EQUIP - IBIAPABA" × "IBIAPABA - SEDE"). */
+const GENERIC_WORDS = new Set(['EQUIP', 'EQUIPAMENTO', 'EQUIPAMENTOS', 'OBRA', 'SEDE', 'DE', 'DA', 'DO', 'DAS', 'DOS', 'E']);
+
+function significantWords(value: string): Set<string> {
+  return new Set(normalizeLabel(value).split(' ').filter((w) => w && !GENERIC_WORDS.has(w)));
+}
+
+/**
+ * Obras do mesmo cliente que provavelmente são a mesma: mesmo nome depois de
+ * tirar acento/pontuação e palavras genéricas (EQUIP, SEDE, OBRA…), ou uma
+ * contida na outra. Só sugestão — quem decide é o usuário.
+ */
+function findProbableDuplicates(obras: Obra[]): Map<string, Obra[]> {
+  const result = new Map<string, Obra[]>();
+  const keys = obras.map((o) => {
+    const words = new Set<string>();
+    for (const label of [o.name, o.costCenterLabel, ...o.aliases]) significantWords(label).forEach((w) => words.add(w));
+    return { obra: o, words };
+  });
+  for (const a of keys) {
+    for (const b of keys) {
+      if (a.obra.id === b.obra.id || a.words.size === 0 || b.words.size === 0) continue;
+      const aInB = [...a.words].every((w) => b.words.has(w));
+      const bInA = [...b.words].every((w) => a.words.has(w));
+      if (aInB || bInA) result.set(a.obra.id, [...(result.get(a.obra.id) ?? []), b.obra]);
+    }
+  }
+  return result;
+}
+
 /** Mesma normalização do backend (sem acento/pontuação/caixa) — só para não repetir o nome da obra na linha "reconhece". */
 function normalizeLabel(value: string) {
   return value
@@ -110,7 +140,11 @@ export default function ClientesPage() {
   const [obraDialogClient, setObraDialogClient] = React.useState<ClientWithSites | null>(null);
   const [editingObra, setEditingObra] = React.useState<Obra | null>(null);
   const [editingSite, setEditingSite] = React.useState<Site | null>(null);
-  const [mergingObra, setMergingObra] = React.useState<{ obra: Obra; client: ClientWithSites } | null>(null);
+  const [removingObra, setRemovingObra] = React.useState<{
+    obra: Obra;
+    client: ClientWithSites;
+    suggested: Obra[];
+  } | null>(null);
   const [actionError, setActionError] = React.useState<string | null>(null);
 
   const loadClients = React.useCallback(async () => {
@@ -279,6 +313,7 @@ export default function ClientesPage() {
             const obras = client.sites
               .flatMap((site) => site.obras.map((obra) => ({ obra, site })))
               .sort((a, b) => a.obra.name.localeCompare(b.obra.name, 'pt-BR'));
+            const duplicates = findProbableDuplicates(obras.map((o) => o.obra));
             return (
               <Card key={client.id} className="shadow-card">
                 <CardContent className="space-y-3 p-5">
@@ -315,6 +350,17 @@ export default function ClientesPage() {
                     <p className="text-sm text-muted-foreground">Nenhuma obra cadastrada ainda.</p>
                   )}
 
+                  {duplicates.size > 0 && (
+                    <div className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning/10 p-3 text-xs">
+                      <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" />
+                      <span>
+                        {duplicates.size} obra(s) parecem duplicadas (marcadas abaixo). Clique na{' '}
+                        <Trash2 className="inline h-3 w-3" /> da que deve sumir: se ela tiver ativos, você escolhe para
+                        qual obra eles vão antes de excluir.
+                      </span>
+                    </div>
+                  )}
+
                   <div className="space-y-1.5">
                     {obras.map(({ obra, site }) => (
                       <div
@@ -325,6 +371,15 @@ export default function ClientesPage() {
                           <div className="flex min-w-0 items-center gap-1.5">
                             <HardHat className="h-4 w-4 shrink-0 text-primary" />
                             <span className="truncate text-sm font-medium">{obra.name}</span>
+                            {duplicates.has(obra.id) && (
+                              <Badge
+                                variant="outline"
+                                className="shrink-0 border-warning/40 bg-warning/10 text-warning"
+                                title={`Parecida com: ${duplicates.get(obra.id)!.map((d) => d.name).join(', ')}`}
+                              >
+                                possível duplicata
+                              </Badge>
+                            )}
                             {!obra.active && (
                               <Badge variant="outline" className="shrink-0">
                                 inativa
@@ -355,21 +410,13 @@ export default function ClientesPage() {
                           <Button
                             variant="ghost"
                             size="sm"
-                            title="Mesclar em outra obra (duplicada)"
-                            onClick={() => setMergingObra({ obra, client })}
+                            title="Excluir obra (se tiver ativos, eles vão para outra obra)"
+                            onClick={() =>
+                              setRemovingObra({ obra, client, suggested: duplicates.get(obra.id) ?? [] })
+                            }
                           >
-                            <Merge className="h-3.5 w-3.5" />
+                            <Trash2 className="h-3.5 w-3.5 text-destructive" />
                           </Button>
-                          {obra._count.allocations === 0 && obra._count.contracts === 0 && (
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              title="Excluir obra"
-                              onClick={() => handleDelete(`/clients/obras/${obra.id}`, `a obra "${obra.name}"`)}
-                            >
-                              <Trash2 className="h-3.5 w-3.5 text-destructive" />
-                            </Button>
-                          )}
                         </div>
                       </div>
                     ))}
@@ -570,11 +617,11 @@ export default function ClientesPage() {
           loadClients();
         }}
       />
-      <MergeObraDialog
-        target={mergingObra}
-        onClose={() => setMergingObra(null)}
+      <RemoveObraDialog
+        target={removingObra}
+        onClose={() => setRemovingObra(null)}
         onSaved={() => {
-          setMergingObra(null);
+          setRemovingObra(null);
           loadClients();
         }}
       />
@@ -869,17 +916,18 @@ function EditSiteDialog({ site, onClose, onSaved }: { site: Site | null; onClose
 }
 
 /**
- * Mescla uma obra duplicada em outra do mesmo cliente: todos os ativos
- * (alocações atuais e históricas) e contratos vão para a obra escolhida, a
- * classificação da duplicada vira apelido da escolhida (a próxima
- * importação já cai nela) e a duplicada é excluída.
+ * Exclui uma obra. Vazia: exclui direto. Com ativos/contratos: o usuário
+ * escolhe para qual obra eles vão (as alocações atuais e o histórico passam
+ * para lá, a classificação da excluída vira apelido da escolhida para a
+ * próxima importação cair nela) e só então a obra é excluída — é o jeito de
+ * limpar obras duplicadas sem perder nada.
  */
-function MergeObraDialog({
+function RemoveObraDialog({
   target,
   onClose,
   onSaved,
 }: {
-  target: { obra: Obra; client: ClientWithSites } | null;
+  target: { obra: Obra; client: ClientWithSites; suggested: Obra[] } | null;
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -887,73 +935,105 @@ function MergeObraDialog({
   const [error, setError] = React.useState<string | null>(null);
   const [submitting, setSubmitting] = React.useState(false);
 
+  const isEmpty = !!target && target.obra._count.allocations === 0 && target.obra._count.contracts === 0;
+
   React.useEffect(() => {
-    setDestinationId('');
+    setDestinationId(target?.suggested.length === 1 ? target.suggested[0].id : '');
     setError(null);
   }, [target]);
 
-  const options = React.useMemo(
-    () =>
-      target
-        ? target.client.sites.flatMap((site) =>
-            site.obras.filter((o) => o.id !== target.obra.id).map((o) => ({ obra: o, site })),
-          )
-        : [],
-    [target],
-  );
+  const options = React.useMemo(() => {
+    if (!target) return [];
+    const suggestedIds = new Set(target.suggested.map((o) => o.id));
+    return target.client.sites
+      .flatMap((site) => site.obras.filter((o) => o.id !== target.obra.id).map((o) => ({ obra: o, site })))
+      .sort(
+        (a, b) =>
+          Number(suggestedIds.has(b.obra.id)) - Number(suggestedIds.has(a.obra.id)) ||
+          a.obra.name.localeCompare(b.obra.name, 'pt-BR'),
+      )
+      .map((o) => ({ ...o, suggested: suggestedIds.has(o.obra.id) }));
+  }, [target]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!target || !destinationId) return;
+    if (!target) return;
     setError(null);
     setSubmitting(true);
     try {
-      await apiFetch(`/clients/obras/${target.obra.id}/merge`, {
-        method: 'POST',
-        body: JSON.stringify({ targetObraId: destinationId }),
-      });
+      if (isEmpty) {
+        await apiFetch(`/clients/obras/${target.obra.id}`, { method: 'DELETE' });
+      } else {
+        if (!destinationId) throw new Error('Escolha para qual obra os ativos vão.');
+        await apiFetch(`/clients/obras/${target.obra.id}/merge`, {
+          method: 'POST',
+          body: JSON.stringify({ targetObraId: destinationId }),
+        });
+      }
       onSaved();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Não foi possível mesclar as obras.');
+      setError(err instanceof ApiError || err instanceof Error ? err.message : 'Não foi possível excluir a obra.');
     } finally {
       setSubmitting(false);
     }
   }
 
+  const destination = options.find((o) => o.obra.id === destinationId)?.obra;
+
   return (
     <Dialog open={!!target} onOpenChange={(v) => !v && onClose()}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Mesclar obra — {target?.obra.name}</DialogTitle>
+          <DialogTitle>Excluir obra — {target?.obra.name}</DialogTitle>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
           {error && <Alert variant="destructive">{error}</Alert>}
-          <p className="text-sm text-muted-foreground">
-            Use quando esta obra é uma <strong>duplicata</strong> de outra. Os{' '}
-            <strong>{target?.obra._count.allocations ?? 0} registro(s) de alocação</strong> e{' '}
-            <strong>{target?.obra._count.contracts ?? 0} contrato(s)</strong> dela passam para a obra escolhida abaixo,
-            a classificação &quot;{target?.obra.costCenterLabel}&quot; passa a ser reconhecida pela obra escolhida (a
-            próxima importação já cai nela) e esta obra é excluída.
-          </p>
-          <div className="space-y-1.5">
-            <Label htmlFor="mergeDestination">Obra que vai ficar</Label>
-            <Select
-              id="mergeDestination"
-              required
-              value={destinationId}
-              onChange={(e) => setDestinationId(e.target.value)}
-            >
-              <option value="">Selecione...</option>
-              {options.map(({ obra, site }) => (
-                <option key={obra.id} value={obra.id}>
-                  {obra.name} — CNPJ {formatCnpj(site.cnpj)} ({obra._count.allocations} aloc.)
-                </option>
-              ))}
-            </Select>
-          </div>
+          {isEmpty ? (
+            <p className="text-sm text-muted-foreground">
+              Esta obra não tem ativos nem contratos. Ela será excluída — essa ação não pode ser desfeita.
+            </p>
+          ) : (
+            <>
+              <p className="text-sm text-muted-foreground">
+                Esta obra tem <strong>{target?.obra._count.allocations ?? 0} alocação(ões)</strong> (atuais e
+                histórico) e <strong>{target?.obra._count.contracts ?? 0} contrato(s)</strong>. Para excluí-la, escolha
+                a obra que vai recebê-los. Nada se perde: o histórico dos ativos passa para lá e a classificação
+                &quot;{target?.obra.costCenterLabel}&quot; passa a ser reconhecida por ela na próxima importação.
+              </p>
+              <div className="space-y-1.5">
+                <Label htmlFor="removeDestination">Mover os ativos para</Label>
+                <Select
+                  id="removeDestination"
+                  required
+                  value={destinationId}
+                  onChange={(e) => setDestinationId(e.target.value)}
+                >
+                  <option value="">Selecione...</option>
+                  {options.map(({ obra, site, suggested }) => (
+                    <option key={obra.id} value={obra.id}>
+                      {suggested ? '★ ' : ''}
+                      {obra.name} — CNPJ {formatCnpj(site.cnpj)} ({obra._count.allocations} aloc.)
+                    </option>
+                  ))}
+                </Select>
+                {target && target.suggested.length > 0 && (
+                  <p className="text-xs text-muted-foreground">★ = parece ser a mesma obra.</p>
+                )}
+              </div>
+            </>
+          )}
           <DialogFooter>
-            <Button type="submit" disabled={submitting || !destinationId}>
-              {submitting ? 'Mesclando...' : 'Mesclar'}
+            <Button variant="outline" type="button" onClick={onClose}>
+              Cancelar
+            </Button>
+            <Button type="submit" variant="destructive" disabled={submitting || (!isEmpty && !destinationId)}>
+              {submitting
+                ? 'Excluindo...'
+                : isEmpty
+                  ? 'Excluir obra'
+                  : destination
+                    ? `Mover para "${destination.name}" e excluir`
+                    : 'Mover e excluir'}
             </Button>
           </DialogFooter>
         </form>

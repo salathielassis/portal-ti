@@ -31,7 +31,7 @@ interface Contract {
 interface Obra {
   id: string;
   name: string;
-  site: { id: string; name: string };
+  site: { id: string; name: string; cnpj: string };
 }
 
 interface Asset {
@@ -273,7 +273,9 @@ export default function RelatoriosPage() {
                 <option value="">Todas as obras / centros de custo</option>
                 {obras.map((o) => (
                   <option key={o.id} value={o.id}>
-                    {o.site.name} · {o.name}
+                    {obras.filter((x) => x.name.trim().toUpperCase() === o.name.trim().toUpperCase()).length > 1
+                      ? `${o.name} — CNPJ ${o.site.cnpj}`
+                      : o.name}
                   </option>
                 ))}
               </Select>
