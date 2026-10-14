@@ -20,6 +20,9 @@ import {
   Download,
   Upload,
   Truck,
+  Copy,
+  Check,
+  Mail,
 } from 'lucide-react';
 import { Header } from '@/components/layout/header';
 import { useAuth } from '@/contexts/auth-context';
@@ -100,7 +103,11 @@ interface Asset {
   specs: AssetSpecs | null;
   contract: Contract | null;
   priceTier: PriceTier | null;
-  allocations: { assignedToName: string; site: Site | null; obra: { id: string; name: string } | null }[];
+  allocations: {
+    assignedToName: string;
+    site: Site | null;
+    obra: { id: string; name: string; costCenterLabel?: string } | null;
+  }[];
 }
 
 interface AllocationHistoryEntry {
@@ -301,6 +308,130 @@ function AssetInfoCard({ asset }: { asset: Asset }) {
       <p className="text-muted-foreground">
         Com: {activeAllocation ? locationLabel(activeAllocation) : 'Ninguém (estoque)'}
       </p>
+    </div>
+  );
+}
+
+// Aviso de devolução por e-mail à locadora (Locainfo) — mesmo texto que já é
+// mandado manualmente; aqui só é montado a partir dos dados do ativo.
+const SUPPLIER_EMAIL_TO = 'assistencia@locainfo.com.br; nfe@locainfo.com.br';
+const SUPPLIER_EMAIL_CC = 'otavio.henrique@doisa.com; leticia.marcelly@doisa.com';
+// Equipamento devolvido à locadora sempre fica disponível na matriz.
+const RETURN_LOCATION = 'nosso escritório Sede em Natal';
+// Usado só quando o ativo nunca foi alocado a uma obra.
+const DEFAULT_COST_CENTER = 'DOISA NATAL - SEDE';
+
+function greeting() {
+  const hour = new Date().getHours();
+  if (hour < 12) return 'Bom dia';
+  if (hour < 18) return 'Boa tarde';
+  return 'Boa noite';
+}
+
+function buildSupplierReturnEmail(asset: Asset, costCenter: string) {
+  return [
+    `${greeting()}, encontra-se em ${RETURN_LOCATION}, o seguinte equipamento para devolução:`,
+    '',
+    `${TYPE_LABEL[asset.type]}: ${`${asset.brand} ${asset.model}`.trim().toUpperCase()}`,
+    `Tombo: ${asset.assetTag}`,
+    `Nº de Série: ${asset.serialNumber || '—'}`,
+    `Centro de Custo: ${costCenter}`,
+  ].join('\n');
+}
+
+function CopyButton({ text, label }: { text: string; label: string }) {
+  const [copied, setCopied] = React.useState(false);
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      // Fallback para contexto sem HTTPS (clipboard API indisponível).
+      const el = document.createElement('textarea');
+      el.value = text;
+      document.body.appendChild(el);
+      el.select();
+      document.execCommand('copy');
+      el.remove();
+    }
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }
+  return (
+    <Button type="button" variant="outline" size="sm" onClick={copy}>
+      {copied ? <Check className="mr-1.5 h-3.5 w-3.5" /> : <Copy className="mr-1.5 h-3.5 w-3.5" />}
+      {copied ? 'Copiado' : label}
+    </Button>
+  );
+}
+
+function SupplierReturnEmail({ asset }: { asset: Asset }) {
+  // Centro de custo = CLASSIFICAÇÃO da obra da alocação mais recente (ativa
+  // ou não) — é por ela que a locadora cobra, mesmo com o ativo já no
+  // estoque. A listagem só traz a alocação ativa, por isso busca o detalhe.
+  const [costCenter, setCostCenter] = React.useState<string | null>(
+    asset.allocations[0]?.obra?.costCenterLabel ?? null,
+  );
+  const [body, setBody] = React.useState('');
+  const subject = `Devolução de ${TYPE_LABEL[asset.type]}`;
+
+  React.useEffect(() => {
+    if (costCenter) return;
+    let cancelled = false;
+    apiFetch<{ allocations: { obra: { costCenterLabel: string } | null }[] }>(`/assets/${asset.id}`)
+      .then((detail) => {
+        if (cancelled) return;
+        const label = detail.allocations.find((a) => a.obra)?.obra?.costCenterLabel;
+        setCostCenter(label ?? DEFAULT_COST_CENTER);
+      })
+      .catch(() => !cancelled && setCostCenter(DEFAULT_COST_CENTER));
+    return () => {
+      cancelled = true;
+    };
+  }, [asset.id, costCenter]);
+
+  React.useEffect(() => {
+    if (costCenter) setBody(buildSupplierReturnEmail(asset, costCenter));
+  }, [asset, costCenter]);
+
+  const mailto =
+    `mailto:${SUPPLIER_EMAIL_TO.replace(/; /g, ',')}` +
+    `?cc=${encodeURIComponent(SUPPLIER_EMAIL_CC.replace(/; /g, ','))}` +
+    `&subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+
+  return (
+    <div className="space-y-3 rounded-md border p-3">
+      <div className="flex items-center gap-2 text-sm font-medium">
+        <Mail className="h-4 w-4" /> E-mail para a locadora
+      </div>
+      <div className="space-y-1 text-xs text-muted-foreground">
+        <p>
+          <strong>Para:</strong> {SUPPLIER_EMAIL_TO}
+        </p>
+        <p>
+          <strong>Cc:</strong> {SUPPLIER_EMAIL_CC}
+        </p>
+        <p>
+          <strong>Assunto:</strong> {subject}
+        </p>
+      </div>
+      <Textarea
+        aria-label="Texto do e-mail"
+        rows={7}
+        className="font-mono text-xs"
+        value={costCenter ? body : 'Carregando...'}
+        disabled={!costCenter}
+        onChange={(e) => setBody(e.target.value)}
+      />
+      <div className="flex flex-wrap gap-2">
+        <CopyButton text={body} label="Copiar texto" />
+        <CopyButton text={SUPPLIER_EMAIL_TO} label="Copiar destinatários" />
+        <CopyButton text={subject} label="Copiar assunto" />
+        <Button type="button" variant="outline" size="sm" asChild>
+          <a href={mailto}>
+            <Mail className="mr-1.5 h-3.5 w-3.5" /> Abrir no e-mail
+          </a>
+        </Button>
+      </div>
     </div>
   );
 }
@@ -1610,7 +1741,7 @@ export default function AtivosPage() {
 
       {/* Devolver à locadora */}
       <Dialog open={!!returningToSupplierAsset} onOpenChange={(v) => !v && setReturningToSupplierAsset(null)}>
-        <DialogContent>
+        <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Devolver {returningToSupplierAsset?.assetTag} à locadora</DialogTitle>
           </DialogHeader>
@@ -1622,6 +1753,9 @@ export default function AtivosPage() {
               para o status <strong>Devolvido</strong>. Use quando já tiver avisado a locadora (por e-mail) para
               parar de cobrar por ele. Se o ativo ainda estiver com alguém, a alocação ativa também é encerrada.
             </p>
+            {returningToSupplierAsset && (
+              <SupplierReturnEmail key={returningToSupplierAsset.id} asset={returningToSupplierAsset} />
+            )}
             <div className="space-y-1.5">
               <Label htmlFor="returnToSupplierDate">Data da devolução à locadora</Label>
               <Input
