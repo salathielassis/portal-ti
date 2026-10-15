@@ -111,6 +111,39 @@ type AllocationForTermo = Prisma.AssetAllocationGetPayload<{
 const EMPRESA_NOME = 'DOIS A ENGENHARIA';
 const EMPRESA_CNPJ = '03.092.799/0001-81';
 const LOGO_PATH = path.join(process.cwd(), 'assets', 'logo-dois-a.png');
+const LOGO_RATIO = 221 / 746; // altura/largura de logo-dois-a.png
+// Contatos do rodapé do timbrado oficial (Manual de Identidade Visual 2023).
+const EMPRESA_CONTATO = 'www.doisa.com  |  +55 (84) 3133.4488';
+const EMPRESA_ENDERECO = 'Av. Deodoro da Fonseca, 479 - Petrópolis  ·  CEP: 59020-025 - Natal/RN - Brasil';
+
+// Paleta do Manual de Identidade Visual Dois A 2023 (azul Pantone 7687 C =
+// RGB 45/79/158; laranja Pantone 716 C = RGB 219/129/46) + neutros de apoio.
+const BRAND = {
+  blue: '#2D4F9E',
+  orange: '#DB812E',
+  ink: '#1A1A1A',
+  muted: '#5B6475',
+  line: '#D5DBE8',
+  tint: '#EEF2FA',
+  bandText: '#DCE3F3',
+} as const;
+
+interface TermoRun {
+  text: string;
+  bold?: boolean;
+}
+
+interface TermoField {
+  label: string;
+  value: string;
+  /** Ocupa a linha inteira da grade (ex.: "Modelo", que costuma ser longo). */
+  full?: boolean;
+}
+
+interface TermoEquipment {
+  title: string;
+  fields: TermoField[];
+}
 
 const ENTREGA_CLAUSES = [
   'Declaro estar ciente de que o equipamento me foi entregue em perfeito estado de funcionamento e conservação.',
@@ -567,54 +600,51 @@ export class AssetsExportService {
     }
   }
 
-  /** Item da lista de equipamentos no formato de marcadores do modelo oficial
-   * (bullet de nível 1 para o equipamento, sub-bullets para os detalhes). */
-  private equipmentBlock(asset: AssetForTermo, kind: 'entrega' | 'devolucao'): { title: string; sub: string[] } {
+  /** Dados do equipamento no formato do card "1. Relação de equipamentos":
+   * nome do tipo em destaque + grade de campos (rótulo/valor). Os rótulos
+   * seguem cada modelo oficial ("Tombo" no de entrega, "Número do Patrimônio"
+   * no de devolução). */
+  private equipmentBlock(asset: AssetForTermo, kind: 'entrega' | 'devolucao'): TermoEquipment {
     const specs = asset.specs as { cpu?: string; ram?: string; storage?: string; gpu?: string } | null;
     const modelo = `${asset.brand} ${asset.model}`.trim();
     const comCarregador = asset.type === 'NOTEBOOK';
 
-    if (kind === 'entrega') {
-      return {
-        title: TYPE_LABEL[asset.type],
-        sub: [
-          `Modelo: ${modelo}`,
-          `Tombo: ${asset.assetTag}`,
-          `Número de Série: ${asset.serialNumber}`,
-          ...(specs?.cpu ? [`Processador: ${specs.cpu}`] : []),
-          ...(specs?.ram ? [`Memória RAM: ${specs.ram}`] : []),
-          ...(specs?.storage ? [`SSD: ${specs.storage}`] : []),
-          ...(specs?.gpu ? [`Placa de vídeo: ${specs.gpu}`] : []),
-          ...(comCarregador ? ['Com Carregador'] : []),
-        ],
-      };
-    }
+    const specFields: TermoField[] = [
+      ...(specs?.cpu ? [{ label: 'Processador', value: specs.cpu }] : []),
+      ...(specs?.ram ? [{ label: 'Memória RAM', value: specs.ram }] : []),
+      ...(specs?.storage ? [{ label: 'SSD', value: specs.storage }] : []),
+      ...(specs?.gpu ? [{ label: 'Placa de vídeo', value: specs.gpu }] : []),
+      ...(comCarregador
+        ? [{ label: 'Acessórios', value: kind === 'entrega' ? 'Com carregador' : 'Carregador/Fonte de alimentação' }]
+        : []),
+    ];
 
     return {
-      title: `${TYPE_LABEL[asset.type]} ${modelo}`.trim(),
-      sub: [
-        ...(specs?.cpu ? [`Processador: ${specs.cpu}`] : []),
-        ...(specs?.ram ? [`Memória RAM: ${specs.ram}`] : []),
-        ...(specs?.storage ? [`SSD: ${specs.storage}`] : []),
-        ...(specs?.gpu ? [`Placa de vídeo: ${specs.gpu}`] : []),
-        ...(comCarregador ? ['Carregador/Fonte de alimentação'] : []),
-        `Número de Série: ${asset.serialNumber}`,
-        `Número do Patrimônio: ${asset.assetTag}`,
+      title: TYPE_LABEL[asset.type],
+      fields: [
+        { label: 'Modelo', value: modelo || '—', full: true },
+        { label: kind === 'entrega' ? 'Tombo' : 'Número do Patrimônio', value: asset.assetTag },
+        { label: 'Número de Série', value: asset.serialNumber },
+        ...specFields,
       ],
     };
   }
 
   /**
-   * Monta o PDF do termo (entrega ou devolução) — layout e texto replicados
-   * dos modelos oficiais da empresa (.docx fornecidos pelo usuário). Reaproveitado
-   * por generateTermo() e generateTermoDevolucao() abaixo, que só variam o
-   * texto de abertura, as cláusulas e se há "Disposições gerais".
+   * Monta o PDF do termo (entrega ou devolução). Texto replicado dos modelos
+   * oficiais (.docx); visual segue o Manual de Identidade Visual Dois A 2023
+   * (azul #2D4F9E, laranja #DB812E, timbrado com faixa azul + logo em caixa
+   * branca e rodapé centralizado com contatos). Reaproveitado por
+   * generateTermo() e generateTermoDevolucao(), que só variam o texto de
+   * abertura, as cláusulas e se há "Disposições gerais".
    */
   private async renderTermo(opts: {
     kind: 'entrega' | 'devolucao';
     title: string;
-    openingParagraph: string;
-    equipment: { title: string; sub: string[] };
+    subtitle: string;
+    openingParagraph: TermoRun[];
+    assetTag: string;
+    equipment: TermoEquipment;
     clauses: readonly string[];
     disposicoesGerais?: readonly string[];
     signDateLabel: string;
@@ -622,135 +652,267 @@ export class AssetsExportService {
     signerCpf?: string | null;
   }): Promise<Buffer> {
     const logo = await this.loadLogo();
+    const generatedAt = fmtDateTime(new Date());
 
     return new Promise((resolve, reject) => {
-      const doc = new PDFDocument({ size: 'A4', margin: 56 });
+      // Margens superior/inferior reservam o espaço do timbrado (faixa azul) e
+      // do rodapé, que são desenhados no fim em todas as páginas (bufferPages).
+      const doc = new PDFDocument({
+        size: 'A4',
+        bufferPages: true,
+        margins: { top: 84, bottom: 66, left: 54, right: 54 },
+        info: { Title: opts.title, Author: EMPRESA_NOME, Creator: 'Portal TI' },
+      });
       const chunks: Buffer[] = [];
       doc.on('data', (c) => chunks.push(c as Buffer));
       doc.on('end', () => resolve(Buffer.concat(chunks)));
       doc.on('error', reject);
 
+      const pageW = doc.page.width;
+      const pageH = doc.page.height;
       const left = doc.page.margins.left;
-      const contentWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right;
+      const contentWidth = pageW - left - doc.page.margins.right;
+      const bottomLimit = () => doc.page.height - doc.page.margins.bottom;
 
-      // Linha divisória fina entre seções — o modelo oficial usa uma régua
-      // horizontal antes de cada cabeçalho numerado e antes do bloco de data/
-      // assinatura, em vez de só espaçamento em branco.
-      const rule = () => {
-        doc.moveDown(0.3);
-        const ry = doc.y;
-        doc.moveTo(left, ry).lineTo(left + contentWidth, ry).lineWidth(0.75).strokeColor('#cbd5e1').stroke();
-        doc.moveDown(0.5);
+      const ensureSpace = (needed: number) => {
+        if (doc.y + needed > bottomLimit()) doc.addPage();
+        doc.x = left;
       };
 
-      // Cabeçalho: caixa com moldura, logo à esquerda e título à direita —
-      // reproduz a "tabela" de duas colunas com borda do .docx oficial.
-      const logoColWidth = 96;
-      doc.font('Helvetica-Bold').fontSize(13);
-      const titleColWidth = logo ? contentWidth - logoColWidth - 16 : contentWidth;
-      const titleHeight = doc.heightOfString(opts.title, { width: titleColWidth, align: 'center' });
-      const boxPaddingY = 14;
-      const logoRatio = 221 / 746;
-      const logoDisplayWidth = logoColWidth - 16;
-      const logoDisplayHeight = logoDisplayWidth * logoRatio;
-      const boxHeight = Math.max(titleHeight + boxPaddingY * 2, logoDisplayHeight + boxPaddingY * 2);
-      const boxTop = doc.y;
-
-      if (logo) {
-        try {
-          doc.rect(left, boxTop, contentWidth, boxHeight).lineWidth(1).strokeColor('#0f172a').stroke();
-          doc
-            .moveTo(left + logoColWidth, boxTop)
-            .lineTo(left + logoColWidth, boxTop + boxHeight)
-            .lineWidth(1)
-            .strokeColor('#0f172a')
-            .stroke();
-          doc.image(logo, left + 8, boxTop + (boxHeight - logoDisplayHeight) / 2, { width: logoDisplayWidth });
-          doc
-            .font('Helvetica-Bold')
-            .fontSize(13)
-            .fillColor('#0f172a')
-            .text(opts.title, left + logoColWidth + 8, boxTop + (boxHeight - titleHeight) / 2, {
-              width: titleColWidth,
-              align: 'center',
-            });
-          // doc.text() com x explícito deixa doc.x nesse mesmo x — sem resetar,
-          // o próximo parágrafo (sem x explícito) herdava esse deslocamento e
-          // ficava com metade do texto fora da margem direita (invisível).
-          doc.x = left;
-          doc.y = boxTop + boxHeight + 16;
-        } catch {
-          // logo corrompida/formato inválido — segue sem caixa/logo, só o título
-          doc.font('Helvetica-Bold').fontSize(13).fillColor('#0f172a').text(opts.title, { align: 'center' });
-          doc.moveDown(1);
-        }
-      } else {
-        doc.font('Helvetica-Bold').fontSize(13).fillColor('#0f172a').text(opts.title, { align: 'center' });
-        doc.moveDown(1);
-      }
-
-      doc.font('Helvetica').fontSize(10).fillColor('#0f172a').text(opts.openingParagraph, {
-        width: contentWidth,
-        align: 'justify',
-      });
-      rule();
-
-      doc.font('Helvetica-Bold').fontSize(10.5).text('1. RELAÇÃO DE EQUIPAMENTOS');
-      doc.moveDown(0.3);
-      doc.font('Helvetica-Bold').fontSize(10).text(`•  ${opts.equipment.title}`, left, doc.y, { width: contentWidth });
-      doc.font('Helvetica').fontSize(10);
-      for (const line of opts.equipment.sub) {
-        doc.text(`-  ${line}`, left + 16, doc.y, { width: contentWidth - 16 });
-      }
-      // Mesmo motivo do reset acima: a última linha ficou com x = left + 16 —
-      // sem isso, cláusulas e disposições gerais (width: contentWidth, sem x
-      // explícito) herdavam esse deslocamento e estouravam a margem direita.
+      // ---- Título ----
+      doc.font('Helvetica-Bold').fontSize(17).fillColor(BRAND.blue);
+      doc.text(opts.title, left, doc.y, { width: contentWidth, align: 'center', characterSpacing: 0.4 });
+      doc.moveDown(0.15);
+      doc.font('Helvetica').fontSize(10).fillColor(BRAND.orange);
+      doc.text(opts.subtitle, left, doc.y, { width: contentWidth, align: 'center' });
+      const barY = doc.y + 7;
+      doc.rect(left + contentWidth / 2 - 22, barY, 44, 2.5).fill(BRAND.orange);
       doc.x = left;
-      rule();
+      doc.y = barY + 13;
 
-      doc
-        .font('Helvetica-Bold')
-        .fontSize(10.5)
-        .text(`2. CLÁUSULAS DE ${opts.kind === 'entrega' ? 'RESPONSABILIDADE' : 'DEVOLUÇÃO'}`);
-      doc.moveDown(0.3);
-      doc.font('Helvetica').fontSize(9.5);
-      // O termo de devolução mantém as cláusulas coladas (sem espaço entre
-      // elas), diferente do de entrega — replica o espaçamento visto no .docx.
-      opts.clauses.forEach((clause, i) => {
-        doc.text(`Cláusula ${i + 1}ª – ${clause}`, { width: contentWidth, align: 'justify' });
-        if (opts.kind === 'entrega') doc.moveDown(0.4);
+      // ---- Abertura (com nome/CPF em negrito) ----
+      doc.fontSize(9.8).fillColor(BRAND.ink);
+      opts.openingParagraph.forEach((run, i) => {
+        doc.font(run.bold ? 'Helvetica-Bold' : 'Helvetica').text(run.text, {
+          width: contentWidth,
+          align: 'justify',
+          lineGap: 2.2,
+          continued: i < opts.openingParagraph.length - 1,
+        });
       });
 
+      // Cabeçalho de seção: marcador ▸ laranja (como no manual) + título azul
+      // + filete até a margem direita.
+      const section = (label: string) => {
+        ensureSpace(60);
+        doc.y += 11;
+        const sy = doc.y;
+        doc
+          .polygon([left, sy + 1.5], [left + 5, sy + 4.75], [left, sy + 8])
+          .fill(BRAND.orange);
+        doc.font('Helvetica-Bold').fontSize(10.5).fillColor(BRAND.blue);
+        doc.text(label, left + 11, sy, { lineBreak: false });
+        const textEnd = left + 11 + doc.widthOfString(label) + 8;
+        doc
+          .moveTo(textEnd, sy + 5)
+          .lineTo(left + contentWidth, sy + 5)
+          .lineWidth(0.6)
+          .strokeColor(BRAND.line)
+          .stroke();
+        doc.x = left;
+        doc.y = sy + 17;
+      };
+
+      // ---- 1. Relação de equipamentos (card com grade de campos) ----
+      section('1. RELAÇÃO DE EQUIPAMENTOS');
+      {
+        const pad = 12;
+        const accent = 3;
+        const innerX = left + accent + pad;
+        const innerW = contentWidth - accent - pad * 2;
+        const cols = 3;
+        const gap = 12;
+        const colW = (innerW - gap * (cols - 1)) / cols;
+        const labelH = 10;
+
+        // Monta as linhas da grade antes de desenhar, para saber a altura do card.
+        type Cell = TermoField & { col: number; span: number };
+        const rows: Cell[][] = [];
+        let current: Cell[] = [];
+        let used = 0;
+        for (const f of opts.equipment.fields) {
+          const span = f.full ? cols : 1;
+          if (used + span > cols) {
+            rows.push(current);
+            current = [];
+            used = 0;
+          }
+          current.push({ ...f, col: used, span });
+          used += span;
+        }
+        if (current.length) rows.push(current);
+
+        doc.font('Helvetica-Bold').fontSize(9.5);
+        const cellW = (c: Cell) => colW * c.span + gap * (c.span - 1);
+        const rowHeights = rows.map(
+          (r) => labelH + Math.max(...r.map((c) => doc.heightOfString(c.value || '—', { width: cellW(c) }))) + 8,
+        );
+        const titleH = 16;
+        const cardH = pad + titleH + rowHeights.reduce((a, b) => a + b, 0) + pad - 8;
+
+        ensureSpace(cardH);
+        const top = doc.y;
+        doc.rect(left, top, contentWidth, cardH).fill(BRAND.tint);
+        doc.rect(left, top, accent, cardH).fill(BRAND.blue);
+
+        doc.font('Helvetica-Bold').fontSize(10.5).fillColor(BRAND.blue);
+        doc.text(opts.equipment.title.toUpperCase(), innerX, top + pad, { lineBreak: false, characterSpacing: 0.6 });
+
+        let ry = top + pad + titleH;
+        rows.forEach((r, i) => {
+          for (const c of r) {
+            const cx = innerX + c.col * (colW + gap);
+            doc.font('Helvetica').fontSize(7).fillColor(BRAND.muted);
+            doc.text(c.label.toUpperCase(), cx, ry, { width: cellW(c), lineBreak: false, characterSpacing: 0.5 });
+            doc.font('Helvetica-Bold').fontSize(9.5).fillColor(BRAND.ink);
+            doc.text(c.value || '—', cx, ry + labelH, { width: cellW(c) });
+          }
+          ry += rowHeights[i];
+        });
+        doc.x = left;
+        doc.y = top + cardH;
+      }
+
+      // ---- 2. Cláusulas ----
+      section(`2. CLÁUSULAS DE ${opts.kind === 'entrega' ? 'RESPONSABILIDADE' : 'DEVOLUÇÃO'}`);
+      opts.clauses.forEach((clause, i) => {
+        doc.fontSize(9.3);
+        ensureSpace(doc.heightOfString(`Cláusula ${i + 1}ª – ${clause}`, { width: contentWidth }) + 6);
+        doc.font('Helvetica-Bold').fillColor(BRAND.blue).text(`Cláusula ${i + 1}ª – `, left, doc.y, {
+          width: contentWidth,
+          align: 'justify',
+          lineGap: 1.3,
+          continued: true,
+        });
+        doc.font('Helvetica').fillColor(BRAND.ink).text(clause, { align: 'justify', lineGap: 1.3 });
+        doc.y += 4;
+      });
+
+      // ---- 3. Disposições gerais ----
       if (opts.disposicoesGerais?.length) {
-        rule();
-        doc.font('Helvetica-Bold').fontSize(10.5).text('3. DISPOSIÇÕES GERAIS');
-        doc.moveDown(0.3);
-        doc.font('Helvetica').fontSize(9.5);
+        section('3. DISPOSIÇÕES GERAIS');
+        doc.font('Helvetica').fontSize(9.3).fillColor(BRAND.ink);
         for (const p of opts.disposicoesGerais) {
-          doc.text(p, { width: contentWidth, align: 'justify' });
-          doc.moveDown(0.4);
+          ensureSpace(doc.heightOfString(p, { width: contentWidth }) + 5);
+          doc.text(p, left, doc.y, { width: contentWidth, align: 'justify', lineGap: 1.3 });
+          doc.y += 4;
         }
       }
 
-      rule();
-      doc.font('Helvetica').fontSize(9.5).fillColor('#0f172a').text(`Natal/RN, ${opts.signDateLabel}.`);
+      // ---- Data + assinaturas (bloco nunca é quebrado entre páginas) ----
+      {
+        const colGap = 36;
+        const sigW = (contentWidth - colGap) / 2;
+        // Espaço livre para a assinatura de próprio punho: mínimo de 46pt,
+        // crescendo até 72pt quando sobra página (ex.: termo de devolução).
+        const minSignSpace = 46;
+        const maxSignSpace = 72;
+        const infoH = 46; // nome + detalhe + papel abaixo da linha
+        ensureSpace(14 + 14 + minSignSpace + infoH);
+        doc.y += 14;
 
-      doc.moveDown(2.5);
-      const sigWidth = contentWidth;
-      const sigY1 = doc.y;
-      doc.moveTo(left, sigY1).lineTo(left + sigWidth, sigY1).strokeColor('#94a3b8').stroke();
-      doc.font('Helvetica').fontSize(9.5).fillColor('#0f172a');
-      doc.text(opts.signerName, left, sigY1 + 4, { width: sigWidth });
-      if (opts.signerCpf) doc.text(`CPF: ${opts.signerCpf}`, left, doc.y, { width: sigWidth });
+        doc.font('Helvetica-Bold').fontSize(9.8).fillColor(BRAND.ink);
+        doc.text(`Natal/RN, ${opts.signDateLabel}.`, left, doc.y, { width: contentWidth, align: 'right' });
 
-      doc.moveDown(2);
-      const sigY2 = doc.y;
-      doc.moveTo(left, sigY2).lineTo(left + sigWidth, sigY2).strokeColor('#94a3b8').stroke();
-      doc.text('Responsável do Setor de TI', left, sigY2 + 4, { width: sigWidth });
-      doc.text(`${EMPRESA_NOME} – CNPJ: ${EMPRESA_CNPJ}`, left, doc.y, { width: sigWidth });
+        const signSpace = Math.min(maxSignSpace, Math.max(minSignSpace, bottomLimit() - doc.y - infoH));
+        const lineY = doc.y + signSpace;
+        const signature = (x: number, name: string, detail: string, role: string) => {
+          doc.moveTo(x, lineY).lineTo(x + sigW, lineY).lineWidth(0.8).strokeColor(BRAND.ink).stroke();
+          doc.font('Helvetica-Bold').fontSize(9.5).fillColor(BRAND.ink);
+          doc.text(name, x, lineY + 6, { width: sigW, align: 'center' });
+          doc.font('Helvetica').fontSize(8.5).fillColor(BRAND.muted);
+          doc.text(detail, x, doc.y + 1, { width: sigW, align: 'center' });
+          doc.font('Helvetica-Bold').fontSize(7).fillColor(BRAND.orange);
+          doc.text(role, x, doc.y + 3, { width: sigW, align: 'center', characterSpacing: 0.8 });
+          return doc.y;
+        };
 
-      doc.moveDown(2);
-      doc.font('Helvetica').fontSize(7.5).fillColor('#94a3b8').text(`Documento gerado em ${fmtDateTime(new Date())}`, left);
+        const yA = signature(
+          left,
+          opts.signerName,
+          `CPF: ${opts.signerCpf || '____________________'}`,
+          'COLABORADOR(A)',
+        );
+        const yB = signature(
+          left + sigW + colGap,
+          'Responsável do Setor de TI',
+          `${EMPRESA_NOME} – CNPJ: ${EMPRESA_CNPJ}`,
+          'TECNOLOGIA DA INFORMAÇÃO',
+        );
+        doc.x = left;
+        doc.y = Math.max(yA, yB);
+      }
+
+      // ---- Timbrado (cabeçalho/rodapé) em todas as páginas ----
+      const range = doc.bufferedPageRange();
+      const docLabel = opts.kind === 'entrega' ? 'Termo de Responsabilidade' : 'Termo de Devolução';
+      for (let i = range.start; i < range.start + range.count; i++) {
+        doc.switchToPage(i);
+        // Sem margem inferior enquanto desenha o rodapé — senão o PDFKit
+        // abriria uma página nova ao escrever abaixo dela.
+        const savedBottom = doc.page.margins.bottom;
+        doc.page.margins.bottom = 0;
+
+        // Cabeçalho: faixa azul + filete laranja, logo em caixa branca à esquerda.
+        const bandH = 58;
+        doc.rect(0, 0, pageW, bandH).fill(BRAND.blue);
+        doc.rect(0, bandH, pageW, 3).fill(BRAND.orange);
+        const logoBoxW = 118;
+        const logoBoxH = 40;
+        const logoBoxY = (bandH - logoBoxH) / 2;
+        doc.rect(left, logoBoxY, logoBoxW, logoBoxH).fill('#ffffff');
+        if (logo) {
+          try {
+            const lw = logoBoxW - 20;
+            doc.image(logo, left + 10, logoBoxY + (logoBoxH - lw * LOGO_RATIO) / 2, { width: lw });
+          } catch {
+            // logo corrompida/formato inválido — mantém só a caixa
+          }
+        }
+        doc.font('Helvetica-Bold').fontSize(9).fillColor('#ffffff');
+        doc.text('TECNOLOGIA DA INFORMAÇÃO', left, 18, {
+          width: contentWidth,
+          align: 'right',
+          characterSpacing: 1.2,
+          lineBreak: false,
+        });
+        doc.font('Helvetica').fontSize(8).fillColor(BRAND.bandText);
+        doc.text(`${docLabel}  ·  Patrimônio ${opts.assetTag}`, left, 31, {
+          width: contentWidth,
+          align: 'right',
+          lineBreak: false,
+        });
+
+        // Rodapé: contatos centralizados (como no timbrado oficial) + faixa
+        // azul/laranja na base, metadados de geração e paginação.
+        const fy = pageH - 54;
+        doc.moveTo(left, fy - 8).lineTo(left + contentWidth, fy - 8).lineWidth(0.5).strokeColor(BRAND.line).stroke();
+        doc.font('Helvetica-Bold').fontSize(7.5).fillColor(BRAND.blue);
+        doc.text(EMPRESA_CONTATO, left, fy, { width: contentWidth, align: 'center', lineBreak: false });
+        doc.font('Helvetica').fontSize(7).fillColor(BRAND.muted);
+        doc.text(EMPRESA_ENDERECO, left, fy + 10, { width: contentWidth, align: 'center', lineBreak: false });
+        doc.fontSize(6.5).fillColor(BRAND.muted);
+        doc.text(`Gerado pelo Portal TI em ${generatedAt}`, left, fy + 24, { lineBreak: false });
+        doc.text(`Página ${i - range.start + 1} de ${range.count}`, left, fy + 24, {
+          width: contentWidth,
+          align: 'right',
+          lineBreak: false,
+        });
+        doc.rect(0, pageH - 7, pageW, 7).fill(BRAND.blue);
+        doc.rect(pageW - 120, pageH - 7, 120, 7).fill(BRAND.orange);
+
+        doc.page.margins.bottom = savedBottom;
+      }
 
       doc.end();
     });
@@ -766,13 +928,21 @@ export class AssetsExportService {
     const cpf = allocation.cpf?.trim();
     return this.renderTermo({
       kind: 'entrega',
-      title: 'TERMO DE RESPONSABILIDADE PELO USO DE EQUIPAMENTOS DE TECNOLOGIA DA INFORMAÇÃO (TI)',
-      openingParagraph:
-        `Pelo presente instrumento particular, eu, ${allocation.assignedToName}, brasileiro(a), ` +
-        `portador(a) do CPF nº ${cpf || 'não informado'}, colaborador(a) da empresa ${EMPRESA_NOME}, ` +
-        `inscrita no CNPJ sob o nº ${EMPRESA_CNPJ}, declaro que recebi, para fins de uso exclusivo em ` +
-        `atividades profissionais relacionadas às minhas funções, o seguinte equipamento de tecnologia ` +
-        `da informação (TI):`,
+      title: 'TERMO DE RESPONSABILIDADE',
+      subtitle: 'Pelo uso de equipamentos de Tecnologia da Informação (TI)',
+      openingParagraph: [
+        { text: 'Pelo presente instrumento particular, eu, ' },
+        { text: allocation.assignedToName, bold: true },
+        { text: ', brasileiro(a), portador(a) do CPF nº ' },
+        { text: cpf || 'não informado', bold: true },
+        {
+          text:
+            `, colaborador(a) da empresa ${EMPRESA_NOME}, inscrita no CNPJ sob o nº ${EMPRESA_CNPJ}, ` +
+            `declaro que recebi, para fins de uso exclusivo em atividades profissionais relacionadas às ` +
+            `minhas funções, o seguinte equipamento de tecnologia da informação (TI):`,
+        },
+      ],
+      assetTag: asset.assetTag,
       equipment: this.equipmentBlock(asset, 'entrega'),
       clauses: ENTREGA_CLAUSES,
       disposicoesGerais: [
@@ -798,11 +968,22 @@ export class AssetsExportService {
     const rg = allocation.rg?.trim();
     return this.renderTermo({
       kind: 'devolucao',
-      title: 'TERMO DE DEVOLUÇÃO DE EQUIPAMENTOS DE TECNOLOGIA DA INFORMAÇÃO (TI)',
-      openingParagraph:
-        `Pelo presente instrumento particular, eu, ${allocation.assignedToName}, CPF: ${cpf || 'não informado'}, ` +
-        `e RG: ${rg || 'não informado'}, colaborador(a) da empresa ${EMPRESA_NOME}, inscrita no CNPJ sob o nº ` +
-        `${EMPRESA_CNPJ}, declaro que devolvi o seguinte equipamento de tecnologia da informação (TI):`,
+      title: 'TERMO DE DEVOLUÇÃO',
+      subtitle: 'De equipamentos de Tecnologia da Informação (TI)',
+      openingParagraph: [
+        { text: 'Pelo presente instrumento particular, eu, ' },
+        { text: allocation.assignedToName, bold: true },
+        { text: ', CPF: ' },
+        { text: cpf || 'não informado', bold: true },
+        { text: ', e RG: ' },
+        { text: rg || 'não informado', bold: true },
+        {
+          text:
+            `, colaborador(a) da empresa ${EMPRESA_NOME}, inscrita no CNPJ sob o nº ${EMPRESA_CNPJ}, ` +
+            `declaro que devolvi o seguinte equipamento de tecnologia da informação (TI):`,
+        },
+      ],
+      assetTag: asset.assetTag,
       equipment: this.equipmentBlock(asset, 'devolucao'),
       clauses: DEVOLUCAO_CLAUSES,
       signDateLabel: dataPorExtenso(new Date()),
