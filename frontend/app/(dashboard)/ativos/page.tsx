@@ -539,16 +539,18 @@ export default function AtivosPage() {
     loadData();
   }, [loadData]);
 
-  // Busca livre (tag, número de série, marca, modelo) é aplicada no cliente
-  // sobre a lista já carregada — evita round-trip/debounce a cada tecla, já
-  // que a lista de ativos não é paginada.
+  // Busca livre (tag, número de série, marca, modelo, responsável atual) é
+  // aplicada no cliente sobre a lista já carregada — evita round-trip/debounce
+  // a cada tecla, já que a lista de ativos não é paginada. Ignora acentos e
+  // maiúsculas ("joao" acha "João").
   const filteredAssets = React.useMemo(() => {
-    const term = searchText.trim().toLowerCase();
+    const normalize = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+    const term = normalize(searchText.trim());
     if (!term) return assets;
     return assets.filter((asset) =>
-      [asset.assetTag, asset.serialNumber, asset.brand, asset.model]
-        .filter(Boolean)
-        .some((field) => field.toLowerCase().includes(term)),
+      [asset.assetTag, asset.serialNumber, asset.brand, asset.model, asset.allocations[0]?.assignedToName]
+        .filter((field): field is string => !!field)
+        .some((field) => normalize(field).includes(term)),
     );
   }, [assets, searchText]);
 
@@ -1141,8 +1143,8 @@ export default function AtivosPage() {
             ))}
           </Select>
           <Input
-            className="w-56"
-            placeholder="Buscar tag, série, marca ou modelo..."
+            className="w-64"
+            placeholder="Buscar tag, série, modelo ou responsável..."
             value={searchText}
             onChange={(e) => setSearchText(e.target.value)}
           />
