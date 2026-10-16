@@ -31,6 +31,8 @@ const TYPE_LABEL: Record<AssetType, string> = {
   IMPRESSORA: 'Impressora',
   MONITOR: 'Monitor',
   PERIFERICO: 'Periférico',
+  SMARTPHONE: 'Smartphone',
+  TABLET: 'Tablet',
   OUTRO: 'Outro',
 };
 

@@ -19,7 +19,7 @@ import {
 } from '@/components/ui/table';
 import { apiFetch, apiFetchBlob, ApiError } from '@/lib/api-client';
 
-type AssetType = 'NOTEBOOK' | 'IMPRESSORA' | 'MONITOR' | 'PERIFERICO' | 'OUTRO';
+type AssetType = 'NOTEBOOK' | 'IMPRESSORA' | 'MONITOR' | 'PERIFERICO' | 'SMARTPHONE' | 'TABLET' | 'OUTRO';
 type AssetOwnership = 'PROPRIO' | 'LOCADO';
 type AssetStatus = 'EM_USO' | 'ESTOQUE' | 'MANUTENCAO' | 'DESCARTADO' | 'EM_TRANSITO' | 'DEVOLVIDO';
 
@@ -56,6 +56,8 @@ const TYPE_LABEL: Record<AssetType, string> = {
   IMPRESSORA: 'Impressora',
   MONITOR: 'Monitor',
   PERIFERICO: 'Periférico',
+  SMARTPHONE: 'Smartphone',
+  TABLET: 'Tablet',
   OUTRO: 'Outro',
 };
 

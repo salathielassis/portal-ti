@@ -53,7 +53,7 @@ import {
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { apiFetch, apiFetchBlob, ApiError } from '@/lib/api-client';
 
-type AssetType = 'NOTEBOOK' | 'IMPRESSORA' | 'MONITOR' | 'PERIFERICO' | 'OUTRO';
+type AssetType = 'NOTEBOOK' | 'IMPRESSORA' | 'MONITOR' | 'PERIFERICO' | 'SMARTPHONE' | 'TABLET' | 'OUTRO';
 type AssetOwnership = 'PROPRIO' | 'LOCADO';
 type AssetStatus = 'EM_USO' | 'ESTOQUE' | 'MANUTENCAO' | 'DESCARTADO' | 'EM_TRANSITO' | 'DEVOLVIDO';
 type MovementType = 'ENTREGA' | 'DEVOLUCAO' | 'TRANSFERENCIA' | 'MANUTENCAO_ENTRADA' | 'MANUTENCAO_SAIDA' | 'DESCARTE';
@@ -181,6 +181,8 @@ const TYPE_LABEL: Record<AssetType, string> = {
   IMPRESSORA: 'Impressora',
   MONITOR: 'Monitor',
   PERIFERICO: 'Periférico',
+  SMARTPHONE: 'Smartphone',
+  TABLET: 'Tablet',
   OUTRO: 'Outro',
 };
 
@@ -565,7 +567,7 @@ export default function AtivosPage() {
       await apiFetch('/assets', {
         method: 'POST',
         body: JSON.stringify({
-          assetTag: form.assetTag,
+          assetTag: form.ownership === 'LOCADO' ? form.assetTag : undefined,
           serialNumber: form.serialNumber,
           type: form.type,
           ownership: form.ownership,
@@ -930,17 +932,20 @@ export default function AtivosPage() {
               <form onSubmit={handleSubmit} className="space-y-4">
                 {formError && <Alert variant="destructive">{formError}</Alert>}
                 <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-1.5">
-                    <Label htmlFor="assetTag">Tag de patrimônio</Label>
-                    <Input
-                      id="assetTag"
-                      required
-                      placeholder="NB-00301"
-                      value={form.assetTag}
-                      onChange={(e) => setForm({ ...form, assetTag: e.target.value })}
-                    />
-                  </div>
-                  <div className="space-y-1.5">
+                  {/* Próprio = patrimônio DOISA, controlado pelo nº de série — sem tag. */}
+                  {form.ownership === 'LOCADO' && (
+                    <div className="space-y-1.5">
+                      <Label htmlFor="assetTag">Tag de patrimônio</Label>
+                      <Input
+                        id="assetTag"
+                        required
+                        placeholder="NB-00301"
+                        value={form.assetTag}
+                        onChange={(e) => setForm({ ...form, assetTag: e.target.value })}
+                      />
+                    </div>
+                  )}
+                  <div className={form.ownership === 'LOCADO' ? 'space-y-1.5' : 'col-span-2 space-y-1.5'}>
                     <Label htmlFor="serialNumber">Número de série</Label>
                     <Input
                       id="serialNumber"
@@ -960,6 +965,8 @@ export default function AtivosPage() {
                       <option value="IMPRESSORA">Impressora</option>
                       <option value="MONITOR">Monitor</option>
                       <option value="PERIFERICO">Periférico</option>
+                      <option value="SMARTPHONE">Smartphone</option>
+                      <option value="TABLET">Tablet</option>
                       <option value="OUTRO">Outro</option>
                     </Select>
                   </div>
@@ -1388,6 +1395,8 @@ export default function AtivosPage() {
                   <option value="IMPRESSORA">Impressora</option>
                   <option value="MONITOR">Monitor</option>
                   <option value="PERIFERICO">Periférico</option>
+                  <option value="SMARTPHONE">Smartphone</option>
+                  <option value="TABLET">Tablet</option>
                   <option value="OUTRO">Outro</option>
                 </Select>
               </div>

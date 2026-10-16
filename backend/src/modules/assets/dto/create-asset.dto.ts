@@ -3,9 +3,14 @@ import { AssetOwnership, AssetType } from '@prisma/client';
 import { IsEnum, IsObject, IsOptional, IsString, IsUUID } from 'class-validator';
 
 export class CreateAssetDto {
-  @ApiProperty({ example: 'NB-00300' })
+  @ApiProperty({
+    example: 'NB-00300',
+    required: false,
+    description: 'Obrigatório quando ownership = LOCADO — no próprio (patrimônio DOISA) assume o nº de série',
+  })
+  @IsOptional()
   @IsString()
-  assetTag: string;
+  assetTag?: string;
 
   @ApiProperty()
   @IsString()

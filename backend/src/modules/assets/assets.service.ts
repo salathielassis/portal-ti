@@ -48,10 +48,17 @@ export class AssetsService {
       throw new BadRequestException('Ativos locados precisam informar o contrato de origem');
     }
 
-    dto.assetTag = normalizeAssetTag(dto.assetTag);
     dto.serialNumber = normalizeSerial(dto.serialNumber);
+    // Próprio = patrimônio DOISA, controlado pelo nº de série: sem tombo
+    // informado, a tag (única e exibida em telas/termos) assume o próprio nº de série.
+    dto.assetTag = normalizeAssetTag(dto.assetTag ?? '');
+    if (!dto.assetTag && dto.ownership === AssetOwnership.PROPRIO) dto.assetTag = dto.serialNumber;
     if (!dto.assetTag || !dto.serialNumber) {
-      throw new BadRequestException('Informe o patrimônio (tombo) e o número de série.');
+      throw new BadRequestException(
+        dto.ownership === AssetOwnership.PROPRIO
+          ? 'Informe o número de série.'
+          : 'Informe o patrimônio (tombo) e o número de série.',
+      );
     }
     await this.assertUniqueIdentifiers(dto.assetTag, dto.serialNumber);
 
