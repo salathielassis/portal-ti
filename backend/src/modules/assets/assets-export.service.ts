@@ -112,6 +112,7 @@ type AllocationForTermo = Prisma.AssetAllocationGetPayload<{
 // também foi extraída desses arquivos.
 const EMPRESA_NOME = 'DOIS A ENGENHARIA';
 const EMPRESA_CNPJ = '03.092.799/0001-81';
+const EMPRESA_PATRIMONIO = 'DOISA';
 const LOGO_PATH = path.join(process.cwd(), 'assets', 'logo-dois-a.png');
 const LOGO_RATIO = 221 / 746; // altura/largura de logo-dois-a.png
 // Contatos do rodapé do timbrado oficial (Manual de Identidade Visual 2023).
@@ -172,6 +173,17 @@ const MESES = [
  * em qualquer servidor com fuso atrás de UTC (ex.: America/Sao_Paulo).
  * `utc: false` (default) para um instante real como "agora" (new Date()).
  */
+/** Próprio = patrimônio DOISA (controle pelo nº de série); locado = tombo da locadora. */
+function patrimonioLabel(asset: { ownership: string; assetTag: string }): string {
+  return asset.ownership === 'PROPRIO' ? EMPRESA_PATRIMONIO : asset.assetTag;
+}
+
+function termoHeaderRef(asset: { ownership: string; assetTag: string; serialNumber: string }): string {
+  return asset.ownership === 'PROPRIO'
+    ? `Patrimônio ${EMPRESA_PATRIMONIO}  ·  Série ${asset.serialNumber}`
+    : `Patrimônio ${asset.assetTag}`;
+}
+
 function dataPorExtenso(d: Date, utc = false): string {
   const day = utc ? d.getUTCDate() : d.getDate();
   const month = utc ? d.getUTCMonth() : d.getMonth();
@@ -625,7 +637,7 @@ export class AssetsExportService {
       title: TYPE_LABEL[asset.type],
       fields: [
         { label: 'Modelo', value: modelo || '—', full: true },
-        { label: kind === 'entrega' ? 'Tombo' : 'Número do Patrimônio', value: asset.assetTag },
+        { label: kind === 'entrega' ? 'Tombo' : 'Número do Patrimônio', value: patrimonioLabel(asset) },
         { label: 'Número de Série', value: asset.serialNumber },
         ...specFields,
       ],
@@ -645,7 +657,8 @@ export class AssetsExportService {
     title: string;
     subtitle: string;
     openingParagraph: TermoRun[];
-    assetTag: string;
+    /** Identificação no cabeçalho, ex.: "Patrimônio 022644" ou "Patrimônio DOISA · Série X". */
+    headerRef: string;
     equipment: TermoEquipment;
     clauses: readonly string[];
     disposicoesGerais?: readonly string[];
@@ -889,7 +902,7 @@ export class AssetsExportService {
           lineBreak: false,
         });
         doc.font('Helvetica').fontSize(8).fillColor(BRAND.bandText);
-        doc.text(`${docLabel}  ·  Patrimônio ${opts.assetTag}`, left, 31, {
+        doc.text(`${docLabel}  ·  ${opts.headerRef}`, left, 31, {
           width: contentWidth,
           align: 'right',
           lineBreak: false,
@@ -944,7 +957,7 @@ export class AssetsExportService {
             `minhas funções, o seguinte equipamento de tecnologia da informação (TI):`,
         },
       ],
-      assetTag: asset.assetTag,
+      headerRef: termoHeaderRef(asset),
       equipment: this.equipmentBlock(asset, 'entrega'),
       clauses: ENTREGA_CLAUSES,
       disposicoesGerais: [
@@ -987,7 +1000,7 @@ export class AssetsExportService {
             `declaro que devolvi o seguinte equipamento de tecnologia da informação (TI):`,
         },
       ],
-      assetTag: asset.assetTag,
+      headerRef: termoHeaderRef(asset),
       equipment: this.equipmentBlock(asset, 'devolucao'),
       clauses: DEVOLUCAO_CLAUSES,
       signDateLabel: allocation.returnDate

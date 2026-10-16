@@ -621,7 +621,7 @@ export default function AtivosPage() {
       await apiFetch(`/assets/${editingAsset.id}`, {
         method: 'PATCH',
         body: JSON.stringify({
-          assetTag: editForm.assetTag,
+          assetTag: editForm.ownership === 'LOCADO' ? editForm.assetTag : undefined,
           serialNumber: editForm.serialNumber,
           type: editForm.type,
           ownership: editForm.ownership,
@@ -1362,20 +1362,23 @@ export default function AtivosPage() {
           <form onSubmit={handleUpdateAsset} className="space-y-4">
             {editError && <Alert variant="destructive">{editError}</Alert>}
             <p className="text-sm text-muted-foreground">
-              Corrige os dados cadastrais do equipamento (tag, série, tipo, marca, modelo, propriedade). Não
+              Corrige os dados cadastrais do equipamento (tag, série, tipo, marca, modelo, propriedade — próprio não tem tag, o controle é pelo nº de série). Não
               altera alocação, status nem histórico.
             </p>
             <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <Label htmlFor="editAssetTag">Tag de patrimônio</Label>
-                <Input
-                  id="editAssetTag"
-                  required
-                  value={editForm.assetTag}
-                  onChange={(e) => setEditForm({ ...editForm, assetTag: e.target.value })}
-                />
-              </div>
-              <div className="space-y-1.5">
+              {/* Próprio = patrimônio DOISA, controlado pelo nº de série — tag fica como está. */}
+              {editForm.ownership === 'LOCADO' && (
+                <div className="space-y-1.5">
+                  <Label htmlFor="editAssetTag">Tag de patrimônio</Label>
+                  <Input
+                    id="editAssetTag"
+                    required
+                    value={editForm.assetTag}
+                    onChange={(e) => setEditForm({ ...editForm, assetTag: e.target.value })}
+                  />
+                </div>
+              )}
+              <div className={editForm.ownership === 'LOCADO' ? 'space-y-1.5' : 'col-span-2 space-y-1.5'}>
                 <Label htmlFor="editSerialNumber">Número de série</Label>
                 <Input
                   id="editSerialNumber"
