@@ -842,15 +842,17 @@ export default function AtivosPage() {
    * alocação ainda ativa do ativo (mesma resolução do termo de entrega).
    * Pensado pro fluxo real: imprime/assina no ato da devolução física e só
    * depois clica em "Confirmar devolução" para registrar no sistema.
+   * Também usado no diálogo "Devolver à locadora" — se o ativo já está em
+   * estoque, o backend cai na última alocação encerrada.
    */
-  async function handleDownloadTermoDevolucao(asset: Asset) {
-    setReturnError(null);
+  async function handleDownloadTermoDevolucao(asset: Asset, setError: (msg: string | null) => void) {
+    setError(null);
     setTermoDevolucaoDownloadingId(asset.id);
     try {
       const blob = await apiFetchBlob(`/assets/${asset.id}/termo-devolucao`);
       triggerBlobDownload(blob, `termo-devolucao-${asset.assetTag}.pdf`);
     } catch (err) {
-      setReturnError(err instanceof ApiError ? err.message : 'Não foi possível gerar o termo de devolução.');
+      setError(err instanceof ApiError ? err.message : 'Não foi possível gerar o termo de devolução.');
     } finally {
       setTermoDevolucaoDownloadingId(null);
     }
@@ -1726,7 +1728,7 @@ export default function AtivosPage() {
                 variant="outline"
                 size="sm"
                 disabled={!returningAsset || termoDevolucaoDownloadingId === returningAsset.id}
-                onClick={() => returningAsset && handleDownloadTermoDevolucao(returningAsset)}
+                onClick={() => returningAsset && handleDownloadTermoDevolucao(returningAsset, setReturnError)}
               >
                 <FileSignature className="mr-1.5 h-3.5 w-3.5" />
                 {returningAsset && termoDevolucaoDownloadingId === returningAsset.id
@@ -1779,7 +1781,26 @@ export default function AtivosPage() {
                 onChange={(e) => setReturnToSupplierForm({ ...returnToSupplierForm, notes: e.target.value })}
               />
             </div>
-            <DialogFooter>
+            <p className="text-xs text-muted-foreground">
+              O termo de devolução sai em nome do último colaborador que estava com o equipamento — baixe antes de
+              confirmar, se ele ainda precisar assinar.
+            </p>
+            <DialogFooter className="items-center sm:justify-between">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={!returningToSupplierAsset || termoDevolucaoDownloadingId === returningToSupplierAsset.id}
+                onClick={() =>
+                  returningToSupplierAsset &&
+                  handleDownloadTermoDevolucao(returningToSupplierAsset, setReturnToSupplierError)
+                }
+              >
+                <FileSignature className="mr-1.5 h-3.5 w-3.5" />
+                {returningToSupplierAsset && termoDevolucaoDownloadingId === returningToSupplierAsset.id
+                  ? 'Gerando...'
+                  : 'Baixar termo de devolução'}
+              </Button>
               <Button type="submit">Confirmar devolução à locadora</Button>
             </DialogFooter>
           </form>

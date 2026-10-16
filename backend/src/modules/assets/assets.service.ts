@@ -627,6 +627,34 @@ export class AssetsService {
     return { asset, allocation };
   }
 
+  /**
+   * Alocação usada no termo de devolução: a ativa, se houver (devolução feita
+   * agora, ex.: direto à locadora); senão a última encerrada — cobre o
+   * notebook que já voltou ao estoque antes de seguir para a locadora, ou um
+   * termo que precisa ser reimpresso depois de a devolução já ter sido registrada.
+   */
+  async findAllocationForTermoDevolucao(assetId: string) {
+    const asset = await this.prisma.asset.findUnique({
+      where: { id: assetId },
+      include: {
+        priceTier: true,
+        allocations: {
+          orderBy: [{ isActive: 'desc' }, { deliveryDate: 'desc' }],
+          take: 1,
+          include: { site: true, obra: true, department: true },
+        },
+      },
+    });
+    if (!asset) throw new NotFoundException('Ativo não encontrado');
+
+    const allocation = asset.allocations[0];
+    if (!allocation) {
+      throw new BadRequestException('Este ativo nunca foi alocado a um colaborador — não há termo de devolução a gerar.');
+    }
+
+    return { asset, allocation };
+  }
+
   /** Anexa um arquivo (foto, nota fiscal, termo assinado, etc.) ao cadastro do ativo. */
   async addAttachment(assetId: string, file: Express.Multer.File, type: AssetAttachmentType, userId: string) {
     await this.findOne(assetId);

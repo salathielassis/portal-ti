@@ -961,7 +961,9 @@ export class AssetsExportService {
    * momento em que o colaborador devolve o equipamento fisicamente — ANTES
    * de registrar a devolução no sistema (ver AssetsController.returnAsset).
    * Por isso usa a data de hoje: a `returnDate` real só existe depois que a
-   * devolução é confirmada na tela.
+   * devolução é confirmada na tela. Se a alocação já foi encerrada (termo
+   * gerado depois, ex.: notebook em estoque indo para a locadora), usa a
+   * `returnDate` registrada.
    */
   generateTermoDevolucao(asset: AssetForTermo, allocation: AllocationForTermo): Promise<Buffer> {
     const cpf = allocation.cpf?.trim();
@@ -986,7 +988,9 @@ export class AssetsExportService {
       assetTag: asset.assetTag,
       equipment: this.equipmentBlock(asset, 'devolucao'),
       clauses: DEVOLUCAO_CLAUSES,
-      signDateLabel: dataPorExtenso(new Date()),
+      signDateLabel: allocation.returnDate
+        ? dataPorExtenso(new Date(allocation.returnDate), true)
+        : dataPorExtenso(new Date()),
       signerName: allocation.assignedToName,
       signerCpf: cpf,
     });

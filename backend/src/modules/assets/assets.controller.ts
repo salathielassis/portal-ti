@@ -250,10 +250,10 @@ export class AssetsController {
   @Get(':id/termo-devolucao')
   @ApiOperation({
     summary:
-      'Gera o termo de devolução (PDF) da alocação ativa do ativo — pensado para imprimir/assinar antes de registrar a devolução em si',
+      'Gera o termo de devolução (PDF) da alocação ativa do ativo — ou da última encerrada, se ele já foi devolvido',
   })
   async downloadTermoDevolucao(@Param('id') id: string, @Res() res: Response) {
-    const { asset, allocation } = await this.assetsService.findActiveAllocationForTermo(id);
+    const { asset, allocation } = await this.assetsService.findAllocationForTermoDevolucao(id);
     const buffer = await this.assetsExportService.generateTermoDevolucao(asset, allocation);
     res.set({
       'Content-Type': 'application/pdf',
